@@ -114,10 +114,10 @@ async function sendOTPEmail(toEmail, toName, otp, purpose) {
   try {
     await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
       to_email: toEmail,
-      to_name:  toName || toEmail.split('@')[0],
-      otp_code: otp,
+      name:     toName || toEmail.split('@')[0],
+      otp:      otp,
+      time:     new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
       purpose:  purpose === 'verify' ? 'Email Verification' : 'Password Reset',
-      cafe_name: 'Odoo Cafe',
     }, EMAILJS_PUBLIC_KEY);
     return true;
   } catch (err) {
@@ -221,95 +221,101 @@ async function doSignup() {
   showOTPVerifyScreen(email, 'verify');
 }
 
-// ── OTP Verification Screen ───────────────────────────────────────────────────
-function showOTPVerifyScreen(email, purpose) {
-  const containerId = purpose === 'verify'
-    ? (document.getElementById('auth-signup').classList.contains('hidden') ? 'auth-login' : 'auth-signup')
-    : 'auth-forgot';
+// ── OTP state ─────────────────────────────────────────────────────────────────
+const OTP_CTX = { email: null, purpose: null };
 
-  const el = document.getElementById(containerId);
-  el.innerHTML = `
-    <div style="text-align:center;margin-bottom:16px">
-      <div style="font-size:36px;margin-bottom:8px">🔐</div>
-      <div style="font-size:14px;font-weight:600;color:var(--cream)">Enter the 6-digit OTP</div>
-      <div style="font-size:12px;color:var(--cream-m);margin-top:4px">Sent to <strong style="color:var(--amber)">${email}</strong></div>
-    </div>
-    <div class="form-group" style="text-align:center">
-      <input type="text" id="otp-input" maxlength="6" placeholder="_ _ _ _ _ _"
-        style="letter-spacing:8px;font-size:22px;font-weight:700;text-align:center;width:100%;padding:14px 0"
-        oninput="this.value=this.value.replace(/[^0-9]/g,'')" />
-    </div>
-    <button class="btn-primary" onclick="verifyOTP('${email}','${purpose}')">Verify OTP</button>
-    <div class="auth-footer" style="text-align:center;margin-top:10px">
-      Didn't receive it? <a onclick="resendOTP('${email}','${purpose}')" style="cursor:pointer;color:var(--amber)">Resend OTP</a>
-      &nbsp;·&nbsp; <a onclick="switchAuthTab('${purpose === 'verify' ? 'login' : 'login'}')" style="cursor:pointer">Cancel</a>
-    </div>`;
-  // store context
-  el.dataset.otpEmail   = email;
-  el.dataset.otpPurpose = purpose;
+// ── Show dedicated OTP screen ──────────────────────────────────────────────────
+function showOTPVerifyScreen(email, purpose) {
+  OTP_CTX.email   = email;
+  OTP_CTX.purpose = purpose;
+
+  ['auth-login','auth-signup','auth-forgot','auth-newpass'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('hidden');
+  });
+  const tabs = document.querySelector('.auth-tabs');
+  if (tabs) { tabs.style.opacity = '0.3'; tabs.style.pointerEvents = 'none'; }
+
+  const screen = document.getElementById('auth-otp');
+  screen.classList.remove('hidden');
+  document.getElementById('otp-email-label').textContent = email;
+
+  const inp = document.getElementById('otp-input');
+  if (inp) { inp.value = ''; setTimeout(() => inp.focus(), 100); }
 }
 
-async function verifyOTP(email, purpose) {
-  const input = document.getElementById('otp-input')?.value.trim();
-  if (!input || input.length < 6) { showToast('Enter the 6-digit OTP'); return; }
+function cancelOTP() {
+  OTP_CTX.email = null; OTP_CTX.purpose = null;
+  const screen = document.getElementById('auth-otp');
+  if (screen) screen.classList.add('hidden');
+  const tabs = document.querySelector('.auth-tabs');
+  if (tabs) { tabs.style.opacity = ''; tabs.style.pointerEvents = ''; }
+  switchAuthTab('login');
+}
+
+async function verifyOTP() {
+  const inp   = document.getElementById('otp-input');
+  const input = (inp ? inp.value : '').trim();
+
+  if (!input || input.length < 6) {
+    showToast('Enter the 6-digit OTP');
+    if (inp) inp.focus();
+    return;
+  }
+
+  const email   = OTP_CTX.email;
+  const purpose = OTP_CTX.purpose;
+  if (!email) { showToast('Session expired. Please try again.'); cancelOTP(); return; }
 
   const record = OTP_STORE[email];
   if (!record) { showToast('OTP expired or not found. Request a new one.'); return; }
   if (Date.now() > record.expiry) { delete OTP_STORE[email]; showToast('OTP expired. Request a new one.'); return; }
-  if (record.code !== input) { showToast('Incorrect OTP. Try again.'); return; }
+  if (record.code !== input) { showToast('Incorrect OTP. Try again.'); if (inp) { inp.value = ''; inp.focus(); } return; }
 
   delete OTP_STORE[email];
 
+  // Hide OTP screen, restore tabs
+  document.getElementById('auth-otp').classList.add('hidden');
+  const tabs = document.querySelector('.auth-tabs');
+  if (tabs) { tabs.style.opacity = ''; tabs.style.pointerEvents = ''; }
+
   if (purpose === 'verify') {
-    // Complete signup or mark existing user as verified
     const users = getUsers();
     if (record.pendingUser) {
-      // Brand new signup
       const newUser = {
         id: Date.now(),
         name: record.pendingUser.name,
         email: record.pendingUser.email,
         password: record.pendingUser.password,
-        role: 'employee',
-        status: 'active',
-        verified: true,
+        role: 'employee', status: 'active', verified: true,
       };
       users.push(newUser);
       saveUsers(users);
       showToast('Account verified! You can now log in.');
+      switchAuthTab('login');
     } else {
-      // Existing unverified user
       const u = users.find(x => x.email.toLowerCase() === email.toLowerCase());
       if (u) { u.verified = true; saveUsers(users); }
-      showToast('Email verified! Logging you in…');
-      // Auto-login
       S.currentUser = u || findUser(email);
       if (S.currentUser) {
         localStorage.setItem('cafe_session', JSON.stringify(S.currentUser));
-        showView('session');
+        if (S.currentUser.role === 'admin') { window.location.href = 'admin.html'; }
+        else { showView('session'); showToast('Welcome, ' + S.currentUser.name + '!'); }
         return;
       }
+      switchAuthTab('login');
     }
-    switchAuthTab('login');
 
   } else if (purpose === 'reset') {
-    // Show new-password form
-    const forgot = document.getElementById('auth-forgot');
-    forgot.innerHTML = `
-      <div style="text-align:center;margin-bottom:16px">
-        <div style="font-size:14px;font-weight:600;color:var(--cream)">Set New Password</div>
-        <div style="font-size:12px;color:var(--cream-m);margin-top:4px">${email}</div>
-      </div>
-      <div class="form-group"><label>New Password</label><input type="password" id="rp-pass" placeholder="At least 6 characters"/></div>
-      <div class="form-group"><label>Confirm Password</label><input type="password" id="rp-pass2" placeholder="Repeat password"/></div>
-      <button class="btn-primary" onclick="doResetPassword('${email}')">Set Password</button>
-      <div class="auth-footer"><a onclick="switchAuthTab('login')" style="cursor:pointer">← Back to Login</a></div>`;
+    document.getElementById('np-email-label').textContent = email;
+    document.getElementById('auth-newpass').classList.remove('hidden');
   }
 }
 
-function doResetPassword(email) {
-  const p1 = document.getElementById('rp-pass')?.value;
-  const p2 = document.getElementById('rp-pass2')?.value;
+function doResetPassword() {
+  const email = OTP_CTX.email;
+  const p1 = document.getElementById('np-pass1') ? document.getElementById('np-pass1').value : '';
+  const p2 = document.getElementById('np-pass2') ? document.getElementById('np-pass2').value : '';
   if (!p1 || p1.length < 6) { showToast('Password must be at least 6 characters'); return; }
   if (p1 !== p2) { showToast('Passwords do not match'); return; }
 
@@ -319,18 +325,26 @@ function doResetPassword(email) {
   u.password = p1;
   saveUsers(users);
   showToast('Password updated! Please log in.');
+  OTP_CTX.email = null; OTP_CTX.purpose = null;
+  document.getElementById('auth-newpass').classList.add('hidden');
   switchAuthTab('login');
 }
 
-async function resendOTP(email, purpose) {
+async function resendOTP() {
+  const email   = OTP_CTX.email;
+  const purpose = OTP_CTX.purpose;
+  if (!email) return;
   const record = OTP_STORE[email];
   const user   = findUser(email);
-  const name   = record?.pendingUser?.name || user?.name || email.split('@')[0];
+  const name   = (record && record.pendingUser && record.pendingUser.name) || (user && user.name) || email.split('@')[0];
   const otp    = generateOTP();
-  OTP_STORE[email] = { ...record, code: otp, expiry: Date.now() + 10 * 60 * 1000 };
+  OTP_STORE[email] = Object.assign({}, record, { code: otp, expiry: Date.now() + 10 * 60 * 1000 });
   const sent = await sendOTPEmail(email, name, otp, purpose);
   showToast(sent ? 'OTP resent to ' + email : 'Failed to resend OTP.');
+  const inp = document.getElementById('otp-input');
+  if (inp) { inp.value = ''; inp.focus(); }
 }
+
 
 // ── Forgot Password ───────────────────────────────────────────────────────────
 async function doForgotPassword() {
