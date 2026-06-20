@@ -1,27 +1,44 @@
+require("dotenv").config();
 
-const express=require("express");
-const mongoose=require("mongoose");
-const cors=require("cors");
+const express  = require("express");
+const mongoose = require("mongoose");
+const cors     = require("cors");
+const path     = require("path");
 
-const Product=require("./models/Product");
+const { router: authRouter } = require("./routes/auth");
+const productRouter           = require("./routes/products");
 
-const app=express();
+const app = express();
+
+// ── Middleware ────────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
 
-mongoose.connect("mongodb://127.0.0.1:27017/odooCafe")
-.then(()=>console.log("MongoDB Connected"))
-.catch(err=>console.log(err));
+// Serve the frontend from ../frontend/
+app.use(express.static(path.join(__dirname, "../frontend")));
 
-app.get("/products", async(req,res)=>{
- const data=await Product.find();
- res.json(data);
+// ── API Routes ────────────────────────────────────────────────────────────────
+app.use("/api/auth",     authRouter);
+app.use("/api/products", productRouter);
+
+// Health check
+app.get("/api/health", (_, res) => res.json({ status: "ok", time: new Date() }));
+
+// Catch-all: serve the SPA
+app.get("*", (req, res) => {
+  if (!req.path.startsWith("/api"))
+    res.sendFile(path.join(__dirname, "../frontend/homepage.html"));
 });
 
-app.post("/products", async(req,res)=>{
- const p=new Product(req.body);
- await p.save();
- res.json(p);
-});
-
-app.listen(3000, ()=>console.log("Server running on port 3000"));
+// ── MongoDB Atlas ─────────────────────────────────────────────────────────────
+mongoose
+  .connect(process.env.MONGODB_URI)
+  .then(() => {
+    console.log("✅  MongoDB Atlas connected");
+    const port = process.env.PORT || 3000;
+    app.listen(port, () => console.log(`🚀  Server running on http://localhost:${port}`));
+  })
+  .catch((err) => {
+    console.error("❌  MongoDB connection failed:", err.message);
+    process.exit(1);
+  });

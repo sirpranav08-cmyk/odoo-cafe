@@ -86,36 +86,158 @@ function showView(v) {
 }
 
 function switchAuthTab(tab) {
+  const tabs = ['login','signup','forgot'];
   document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.auth-tab')[tab === 'login' ? 0 : 1].classList.add('active');
-  document.getElementById('auth-login').classList.toggle('hidden', tab !== 'login');
-  document.getElementById('auth-signup').classList.toggle('hidden', tab !== 'signup');
+  const tabIdx = { login: 0, signup: 1 }[tab];
+  if (tabIdx !== undefined) document.querySelectorAll('.auth-tab')[tabIdx].classList.add('active');
+  tabs.forEach(t => document.getElementById('auth-'+t)?.classList.toggle('hidden', t !== tab));
+  // Reset verify prompt if switching away
+  const vp = document.getElementById('verify-prompt');
+  if (vp && tab !== 'login') vp.remove();
 }
 
-function doLogin() {
+// ── API helpers ───────────────────────────────────────────────────────────────
+const API = '/api';
+function authHeader() {
+  const token = localStorage.getItem('cafe_token');
+  return token ? { 'Authorization': 'Bearer ' + token } : {};
+}
+async function apiFetch(path, opts = {}) {
+  const res = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json', ...authHeader(), ...(opts.headers || {}) },
+    ...opts,
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+// ── Login ─────────────────────────────────────────────────────────────────────
+async function doLogin() {
   const email = document.getElementById('l-email').value.trim();
-  const pass = document.getElementById('l-pass').value;
-  const user = S.users.find(u => u.email === email && u.password === pass && u.status === 'active');
-  if (!user) { showToast('Invalid credentials'); return; }
-  S.currentUser = user;
+  const pass  = document.getElementById('l-pass').value;
+  if (!email || !pass) { showToast('Email and password required'); return; }
+
+  const btn = document.querySelector('#auth-login .btn-primary');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+
+  const { ok, status, data } = await apiFetch('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password: pass }),
+  });
+
+  btn.disabled = false; btn.textContent = 'Open Session';
+
+  if (!ok) {
+    if (status === 403 && data.code === 'EMAIL_NOT_VERIFIED') {
+      showVerificationPrompt(email);
+    } else {
+      showToast(data.message || 'Login failed');
+    }
+    return;
+  }
+
+  localStorage.setItem('cafe_token', data.token);
+  S.currentUser = data.user;
   showView('session');
-  showToast('Welcome back, ' + user.name + '!');
+  showToast('Welcome back, ' + data.user.name + '!');
 }
 
-function doSignup() {
-  const name = document.getElementById('s-name').value.trim();
+// ── Show "resend verification" prompt ─────────────────────────────────────────
+function showVerificationPrompt(email) {
+  const existing = document.getElementById('verify-prompt');
+  if (existing) existing.remove();
+
+  const div = document.createElement('div');
+  div.id = 'verify-prompt';
+  div.style.cssText = 'margin-top:12px;padding:12px;background:rgba(232,160,32,0.1);border:1px solid rgba(232,160,32,0.3);border-radius:8px;font-size:12px;color:#B0A080;text-align:center';
+  div.innerHTML = `
+    <div style="margin-bottom:6px">📧 Please verify your email before logging in.</div>
+    <a onclick="resendVerification('${email}')" style="color:var(--amber);cursor:pointer;text-decoration:underline">Resend verification email</a>`;
+  document.getElementById('auth-login').appendChild(div);
+}
+
+async function resendVerification(email) {
+  const { ok, data } = await apiFetch('/auth/resend-verification', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+  showToast(data.message || (ok ? 'Email sent!' : 'Error'));
+}
+
+// ── Forgot password ───────────────────────────────────────────────────────────
+async function doForgotPassword() {
+  const email = document.getElementById('f-email').value.trim();
+  if (!email) { showToast('Enter your email'); return; }
+
+  const btn = document.querySelector('#auth-forgot .btn-primary');
+  btn.disabled = true; btn.textContent = 'Sending…';
+
+  const { data } = await apiFetch('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+
+  btn.disabled = false; btn.textContent = 'Send Reset Link';
+  document.getElementById('auth-forgot').innerHTML = `
+    <div style="text-align:center;padding:20px 0">
+      <div style="font-size:36px;margin-bottom:12px">📬</div>
+      <div style="font-size:14px;color:var(--cream);margin-bottom:8px">${data.message || 'Check your email'}</div>
+      <button class="btn-primary" style="margin-top:16px" onclick="switchAuthTab('login')">← Back to Login</button>
+    </div>`;
+}
+
+// ── Signup ────────────────────────────────────────────────────────────────────
+async function doSignup() {
+  const name  = document.getElementById('s-name').value.trim();
   const email = document.getElementById('s-email').value.trim();
-  const pass = document.getElementById('s-pass').value;
+  const pass  = document.getElementById('s-pass').value;
   if (!name || !email || !pass) { showToast('All fields required'); return; }
-  if (S.users.find(u => u.email === email)) { showToast('Email already registered'); return; }
-  const u = { id: Date.now(), name, email, password: pass, role: 'admin', status: 'active' };
-  S.users.push(u);
-  S.currentUser = u;
-  showView('session');
-  showToast('Account created! Welcome, ' + name);
+  if (pass.length < 6) { showToast('Password must be at least 6 characters'); return; }
+
+  const btn = document.querySelector('#auth-signup .btn-primary');
+  btn.disabled = true; btn.textContent = 'Creating account…';
+
+  const { ok, data } = await apiFetch('/auth/signup', {
+    method: 'POST',
+    body: JSON.stringify({ name, email, password: pass }),
+  });
+
+  btn.disabled = false; btn.textContent = 'Create Account';
+
+  if (!ok) { showToast(data.message || 'Signup failed'); return; }
+
+  // Show success state — user must verify email before they can log in
+  document.getElementById('auth-signup').innerHTML = `
+    <div style="text-align:center;padding:20px 0">
+      <div style="font-size:40px;margin-bottom:12px">📧</div>
+      <div style="font-size:15px;font-weight:600;color:var(--cream);margin-bottom:8px">Check your inbox!</div>
+      <div style="font-size:13px;color:var(--cream-m);line-height:1.6">
+        We sent a verification link to<br><strong style="color:var(--amber)">${email}</strong><br><br>
+        Click the link in the email to activate your account, then come back to log in.
+      </div>
+      <button class="btn-primary" style="margin-top:20px" onclick="switchAuthTab('login')">Go to Login →</button>
+    </div>`;
 }
 
-function doLogout() { S.currentUser = null; S.cart = []; S.currentTable = null; showView('auth') }
+// ── Logout ────────────────────────────────────────────────────────────────────
+function doLogout() {
+  localStorage.removeItem('cafe_token');
+  S.currentUser = null; S.cart = []; S.currentTable = null;
+  showView('auth');
+}
+
+// ── Auto-restore session on page load ────────────────────────────────────────
+async function tryRestoreSession() {
+  const token = localStorage.getItem('cafe_token');
+  if (!token) return;
+  const { ok, data } = await apiFetch('/auth/me');
+  if (ok) {
+    S.currentUser = data;
+    showView('session');
+  } else {
+    localStorage.removeItem('cafe_token');
+  }
+}
 
 function renderSession() {
   if (!S.currentUser) return;
@@ -813,3 +935,6 @@ function closeHamburger() { document.getElementById('hamburger-menu').classList.
 function showToast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2000); }
 document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) o.classList.remove('show'); }));
 document.addEventListener('click', e => { if (!e.target.closest('.hamburger') && !e.target.closest('#hamburger-menu')) closeHamburger(); });
+
+// Restore session on page load (if JWT still valid)
+document.addEventListener('DOMContentLoaded', tryRestoreSession);
