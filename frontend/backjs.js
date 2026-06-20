@@ -99,9 +99,9 @@ function switchAuthTab(tab) {
 // ══════════════════════════════════════════
 // EMAILJS CONFIG — replace with your keys
 // ══════════════════════════════════════════
-const EMAILJS_SERVICE_ID  = 'service_XXXXXXX';   // Your EmailJS Service ID
-const EMAILJS_TEMPLATE_ID = 'template_XXXXXXX';  // Your EmailJS Template ID
-const EMAILJS_PUBLIC_KEY  = 'XXXXXXXXXXXXXXXXXXXX'; // Your EmailJS Public Key
+const EMAILJS_SERVICE_ID  = 'service_lu28vxe';   // Your EmailJS Service ID
+const EMAILJS_TEMPLATE_ID = 'template_63tdbx5';  // Your EmailJS Template ID
+const EMAILJS_PUBLIC_KEY  = 'dkLVASmAKFMrmX8pR'; // Your EmailJS Public Key
 
 // OTP store (in-memory, session only)
 const OTP_STORE = {}; // { email: { code, expiry, purpose } }
