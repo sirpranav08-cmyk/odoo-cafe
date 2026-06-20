@@ -50,7 +50,7 @@ const S = {
   ],
   paymentMethods: [
     { id: 1, name: 'Cash', type: 'cash', enabled: true, icon: '💵' },
-    { id: 2, name: 'UPI', type: 'upi', enabled: true, icon: '📱', upiId: 'odoo_cafe@ybl' },
+    { id: 2, name: 'UPI', type: 'upi', enabled: true, icon: '📱', upiId: 'sripranav08@okaxis' },
     { id: 3, name: 'Card / Digital', type: 'card', enabled: true, icon: '💳' },
   ],
   promotions: [
@@ -970,7 +970,20 @@ function openPaymentModal() {
   document.getElementById('upi-wrap').classList.toggle('hidden', pm.type !== 'upi');
   document.getElementById('card-wrap').classList.toggle('hidden', pm.type !== 'card');
   if (pm.type === 'upi') {
-    document.getElementById('upi-qr-display').innerHTML = `<div style="text-align:center;padding:10px"><div style="font-size:30px;margin-bottom:6px">📱</div><div style="font-size:11px;color:#333">Scan to pay</div><div style="font-size:10px;color:#555;margin-top:4px">${pm.upiId || 'Set UPI ID in settings'}</div><div style="font-size:14px;font-weight:700;color:#111;margin-top:4px">₹${total}</div></div>`;
+    const upiId = pm.upiId || 'sripranav08@okaxis';
+    const payeeName = encodeURIComponent('Odoo Cafe');
+    const note = encodeURIComponent('Order #' + String(S.orderNum).padStart(5, '0'));
+    const upiLink = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${payeeName}&am=${total}&cu=INR&tn=${note}`;
+    document.getElementById('upi-id-label').textContent = upiId;
+    document.getElementById('upi-amount-label').textContent = '\u20B9' + total;
+    document.getElementById('upi-deep-link').href = upiLink;
+    const qrContainer = document.getElementById('upi-qr-canvas');
+    qrContainer.innerHTML = '';
+    new QRCode(qrContainer, {
+      text: upiLink, width: 200, height: 200,
+      colorDark: '#111111', colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M,
+    });
   }
   openOverlay('ov-payment');
 }
