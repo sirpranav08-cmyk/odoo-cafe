@@ -390,6 +390,22 @@ async function tryRestoreSession() {
   }
 }
 
+function renderSession() {
+  if (!S.currentUser) return;
+  document.getElementById('sess-user-label').textContent = 'Logged in as ' + S.currentUser.name + ' (' + (S.currentUser.role || 'user') + ')';
+  const paid = S.orders.filter(o => o.status === 'paid');
+  document.getElementById('sess-orders').textContent = paid.length;
+  const rev = paid.reduce((s, o) => s + (o.total || 0), 0);
+  document.getElementById('sess-revenue').textContent = '\u20B9' + rev;
+  document.getElementById('sess-last-open').textContent = new Date().toLocaleDateString('en-IN');
+  document.getElementById('sess-last-sale').textContent = paid.length ? '\u20B9' + paid[0].total : '\u20B90';
+  const avatar = document.getElementById('be-avatar');
+  if (avatar) avatar.textContent = (S.currentUser.name?.[0] || 'A').toUpperCase();
+  const empIcon = document.getElementById('pos-emp-icon');
+  if (empIcon) empIcon.textContent = (S.currentUser.name?.[0] || 'E').toUpperCase();
+}
+
+function openPOSSession() {
   showView('pos');
   setTimeout(() => showFloorPopup(), 200);
   renderPOS();
