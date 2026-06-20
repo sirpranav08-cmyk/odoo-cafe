@@ -9,8 +9,8 @@
     href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600&display=swap"
     rel="stylesheet" />
   <link href="backcss.css" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-  <script src="backjs.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js" defer></script>
+  <script src="backjs.js" defer></script>
 </head>
 
 <body>
@@ -46,7 +46,7 @@
         </div>
         <div id="auth-forgot" class="hidden">
           <div class="form-group"><label>Email</label><input type="email" id="f-email" placeholder="you@cafe.com" /></div>
-          <button class="btn-primary" onclick="doForgotPassword()">Send Reset Link</button>
+          <button class="btn-primary" onclick="doForgotPassword()">Send OTP</button>
           <div class="auth-footer"><a onclick="switchAuthTab('login')">← Back to Login</a></div>
         </div>
       </div>

@@ -164,7 +164,7 @@ async function resendVerification(email) {
   showToast(data.message || (ok ? 'Email sent!' : 'Error'));
 }
 
-// ── Forgot password ───────────────────────────────────────────────────────────
+// ── Forgot password — Step 1: request OTP ────────────────────────────────────
 async function doForgotPassword() {
   const email = document.getElementById('f-email').value.trim();
   if (!email) { showToast('Enter your email'); return; }
@@ -172,18 +172,100 @@ async function doForgotPassword() {
   const btn = document.querySelector('#auth-forgot .btn-primary');
   btn.disabled = true; btn.textContent = 'Sending…';
 
-  const { data } = await apiFetch('/auth/forgot-password', {
+  const { ok, data } = await apiFetch('/auth/forgot-password', {
     method: 'POST',
     body: JSON.stringify({ email }),
   });
 
-  btn.disabled = false; btn.textContent = 'Send Reset Link';
+  btn.disabled = false; btn.textContent = 'Send OTP';
+
+  if (!ok) { showToast(data.message || 'Error'); return; }
+
+  if (data.sent) {
+    // Send OTP via EmailJS
+    await sendOTPEmail(data.email, data.name, data.otp);
+    showForgotOTPScreen(email);
+  } else {
+    // Email not found — show generic message (no enumeration)
+    showToast('If that email exists, an OTP has been sent.');
+  }
+}
+
+// ── Forgot password — Step 2: enter OTP screen ───────────────────────────────
+function showForgotOTPScreen(email) {
+  document.getElementById('auth-forgot').innerHTML = `
+    <div style="text-align:center;margin-bottom:16px">
+      <div style="font-size:32px;margin-bottom:8px">🔐</div>
+      <div style="font-size:14px;font-weight:600;color:var(--cream)">Enter OTP</div>
+      <div style="font-size:12px;color:var(--cream-m);margin-top:4px">
+        Sent to <strong style="color:var(--amber)">${email}</strong> · valid 10 min
+      </div>
+    </div>
+    <div class="form-group">
+      <label>6-digit OTP</label>
+      <input type="text" id="reset-otp" placeholder="000000" maxlength="6"
+        style="text-align:center;font-size:24px;letter-spacing:8px;font-weight:700"
+        oninput="this.value=this.value.replace(/[^0-9]/g,'')" />
+    </div>
+    <div class="form-group">
+      <label>New Password</label>
+      <input type="password" id="reset-pass" placeholder="Min 6 characters" />
+    </div>
+    <div class="form-group">
+      <label>Confirm Password</label>
+      <input type="password" id="reset-pass2" placeholder="Repeat password" />
+    </div>
+    <button class="btn-primary" onclick="doResetPassword('${email}')">Reset Password</button>
+    <div style="margin-top:12px;font-size:12px;color:var(--cream-m);text-align:center">
+      Didn't get it? <a onclick="doResendForgotOTP('${email}')" style="color:var(--amber);cursor:pointer">Resend OTP</a>
+      &nbsp;·&nbsp; <a onclick="switchAuthTab('forgot')" style="color:var(--amber);cursor:pointer">Change email</a>
+    </div>`;
+}
+
+// ── Forgot password — Step 3: submit new password ────────────────────────────
+async function doResetPassword(email) {
+  const otp   = document.getElementById('reset-otp')?.value.trim();
+  const pass  = document.getElementById('reset-pass')?.value;
+  const pass2 = document.getElementById('reset-pass2')?.value;
+
+  if (!otp || otp.length !== 6) { showToast('Enter the 6-digit OTP'); return; }
+  if (!pass || pass.length < 6) { showToast('Password must be at least 6 characters'); return; }
+  if (pass !== pass2)            { showToast('Passwords do not match'); return; }
+
+  const btn = document.querySelector('#auth-forgot .btn-primary');
+  btn.disabled = true; btn.textContent = 'Resetting…';
+
+  const { ok, data } = await apiFetch('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ email, otp, password: pass }),
+  });
+
+  btn.disabled = false; btn.textContent = 'Reset Password';
+
+  if (!ok) { showToast(data.message || 'Failed'); return; }
+
+  // Success — show confirmation and redirect to login
   document.getElementById('auth-forgot').innerHTML = `
     <div style="text-align:center;padding:20px 0">
-      <div style="font-size:36px;margin-bottom:12px">📬</div>
-      <div style="font-size:14px;color:var(--cream);margin-bottom:8px">${data.message || 'Check your email'}</div>
-      <button class="btn-primary" style="margin-top:16px" onclick="switchAuthTab('login')">← Back to Login</button>
+      <div style="font-size:40px;margin-bottom:12px">✅</div>
+      <div style="font-size:15px;font-weight:600;color:var(--cream);margin-bottom:8px">Password Reset!</div>
+      <div style="font-size:13px;color:var(--cream-m);margin-bottom:20px">You can now log in with your new password.</div>
+      <button class="btn-primary" onclick="switchAuthTab('login')">Go to Login →</button>
     </div>`;
+}
+
+// ── Resend forgot password OTP ────────────────────────────────────────────────
+async function doResendForgotOTP(email) {
+  const { ok, data } = await apiFetch('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+  if (ok && data.sent) {
+    await sendOTPEmail(data.email, data.name, data.otp);
+    showToast('New OTP sent to ' + email);
+  } else {
+    showToast('Could not resend OTP');
+  }
 }
 
 // ── EmailJS config — replace with your actual IDs ────────────────────────────
@@ -224,14 +306,16 @@ async function doSignup() {
 // ── Send OTP email via EmailJS ────────────────────────────────────────────────
 async function sendOTPEmail(email, name, otp) {
   try {
-    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+    const result = await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
       to_email: email,
       to_name:  name,
       otp:      otp,
-    });
+    }, EMAILJS_PUBLIC_KEY);
+    console.log('EmailJS success:', result);
   } catch (err) {
-    console.error('EmailJS error:', err);
-    showToast('Could not send OTP email — check EmailJS config');
+    console.error('EmailJS full error:', JSON.stringify(err));
+    console.error('EmailJS status:', err?.status, 'text:', err?.text);
+    showToast('Email error ' + (err?.status || '') + ': ' + (err?.text || JSON.stringify(err)));
   }
 }
 
