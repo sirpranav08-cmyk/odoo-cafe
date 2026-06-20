@@ -50,7 +50,7 @@ const S = {
   ],
   paymentMethods: [
     { id: 1, name: 'Cash', type: 'cash', enabled: true, icon: '💵' },
-    { id: 2, name: 'UPI', type: 'upi', enabled: true, icon: '📱', upiId: 'sripranav08@okaxis' },
+    { id: 2, name: 'UPI', type: 'upi', enabled: true, icon: '📱', upiId: 'odoo_cafe@ybl' },
     { id: 3, name: 'Card / Digital', type: 'card', enabled: true, icon: '💳' },
   ],
   promotions: [
@@ -971,19 +971,30 @@ function openPaymentModal() {
   document.getElementById('card-wrap').classList.toggle('hidden', pm.type !== 'card');
   if (pm.type === 'upi') {
     const upiId = pm.upiId || 'sripranav08@okaxis';
-    const payeeName = encodeURIComponent('Odoo Cafe');
-    const note = encodeURIComponent('Order #' + String(S.orderNum).padStart(5, '0'));
-    const upiLink = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${payeeName}&am=${total}&cu=INR&tn=${note}`;
-    document.getElementById('upi-id-label').textContent = upiId;
-    document.getElementById('upi-amount-label').textContent = '\u20B9' + total;
-    document.getElementById('upi-deep-link').href = upiLink;
-    const qrContainer = document.getElementById('upi-qr-canvas');
-    qrContainer.innerHTML = '';
-    new QRCode(qrContainer, {
-      text: upiLink, width: 200, height: 200,
-      colorDark: '#111111', colorLight: '#ffffff',
-      correctLevel: QRCode.CorrectLevel.M,
-    });
+    const upiLink = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent('Odoo Cafe')}&am=${total}&cu=INR&tn=${encodeURIComponent('Order #' + String(S.orderNum).padStart(5,'0'))}`;
+    // Inject full QR UI into upi-wrap (works whether or not static HTML exists)
+    const wrap = document.getElementById('upi-wrap');
+    if (wrap) {
+      wrap.innerHTML = `
+        <div style="text-align:center;padding:4px 0 12px">
+          <div style="display:inline-block;background:#fff;border-radius:16px;padding:16px;box-shadow:0 4px 24px rgba(0,0,0,.35);margin-bottom:14px;position:relative">
+            <div id="upi-qr-canvas"></div>
+            <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:6px;padding:3px 5px;font-size:11px;font-weight:700;color:#111;pointer-events:none">☕</div>
+          </div>
+          <div style="font-size:11px;color:var(--cream-m);margin-bottom:4px">Scan with any UPI app</div>
+          <div style="font-size:13px;font-weight:600;color:var(--amber);margin-bottom:6px">${upiId}</div>
+          <div style="font-size:20px;font-weight:800;color:var(--cream)">₹${total}</div>
+          <div style="margin-top:14px">
+            <a href="${upiLink}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;padding:7px 14px;font-size:12px;color:#fff;text-decoration:none;font-weight:600">📱 Open UPI App</a>
+          </div>
+          <div style="margin-top:12px;font-size:12px;color:var(--cream-m)">After paying, click <strong style="color:#fff">Confirm Payment</strong> below</div>
+        </div>`;
+      new QRCode(document.getElementById('upi-qr-canvas'), {
+        text: upiLink, width: 200, height: 200,
+        colorDark: '#111111', colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.M,
+      });
+    }
   }
   openOverlay('ov-payment');
 }
