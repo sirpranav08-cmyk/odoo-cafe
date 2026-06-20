@@ -393,7 +393,6 @@ async function tryRestoreSession() {
   showView('pos');
   setTimeout(() => showFloorPopup(), 200);
   renderPOS();
-}
 
 // ══════════════════════════════════════════
 // BACKEND
