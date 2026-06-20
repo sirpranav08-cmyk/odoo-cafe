@@ -11,6 +11,8 @@
   <link href="backcss.css" rel="stylesheet">
   <!-- EmailJS SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+  <!-- QRCode.js for dynamic UPI QR -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="backjs.js"></script>
 </head>
 
@@ -452,8 +454,48 @@
         <div style="font-size:13px;color:var(--green);margin-bottom:8px">Change due: <strong id="change-due">₹0</strong>
         </div>
       </div>
-      <div id="upi-wrap" class="hidden">
-        <div class="upi-qr" id="upi-qr-display"></div>
+      <div id="upi-id-label" class="hidden">
+        <div style="text-align:center;padding:4px 0 12px">
+          <!-- QR Box -->
+          <div id="upi-qr-box" style="
+            display:inline-block;
+            background:#fff;
+            border-radius:16px;
+            padding:16px;
+            box-shadow:0 4px 24px rgba(0,0,0,0.35);
+            margin-bottom:14px;
+            position:relative;
+          ">
+            <div id="upi-qr-canvas"></div>
+            <!-- Cafe logo watermark in centre -->
+            <div style="
+              position:absolute;top:50%;left:50%;
+              transform:translate(-50%,-50%);
+              background:#fff;border-radius:6px;
+              padding:3px 5px;font-size:11px;font-weight:700;
+              color:#111;line-height:1;pointer-events:none;
+            ">☕</div>
+          </div>
+          <!-- UPI details -->
+          <div style="font-size:11px;color:var(--cream-m);margin-bottom:4px">Scan with any UPI app</div>
+          <div id="upi-id-label" style="font-size:13px;font-weight:600;color:var(--amber);margin-bottom:6px"></div>
+          <div style="display:flex;align-items:center;justify-content:center;gap:8px">
+            <span style="font-size:20px;font-weight:800;color:var(--cream)" id="upi-amount-label"></span>
+          </div>
+          <!-- App icons row -->
+          <div style="display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap">
+            <a id="upi-deep-link" target="_blank" style="
+              display:inline-flex;align-items:center;gap:6px;
+              background:var(--surface2);border:1px solid var(--border);
+              border-radius:8px;padding:7px 14px;font-size:12px;
+              color:var(--cream);text-decoration:none;font-weight:600;
+            ">📱 Open UPI App</a>
+          </div>
+          <!-- Status -->
+          <div id="upi-status" style="margin-top:14px;font-size:12px;color:var(--cream-m)">
+            After paying, click <strong style="color:var(--cream)">Confirm Payment</strong> below
+          </div>
+        </div>
       </div>
       <div id="card-wrap" class="hidden">
         <div class="fp-group"><label>Transaction Reference</label><input type="text" id="card-ref"
