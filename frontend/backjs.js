@@ -186,7 +186,15 @@ async function doForgotPassword() {
     </div>`;
 }
 
-// ── Signup ────────────────────────────────────────────────────────────────────
+// ── EmailJS config — replace with your actual IDs ────────────────────────────
+const EMAILJS_SERVICE_ID  = 'service_lu28vxe';
+const EMAILJS_TEMPLATE_ID = 'template_1lobm3b';
+const EMAILJS_PUBLIC_KEY  = 'dkLVASmAKFMrmX8pR';
+
+// Init EmailJS
+if (typeof emailjs !== 'undefined') emailjs.init(EMAILJS_PUBLIC_KEY);
+
+// ── Signup — Step 1: create account & send OTP via EmailJS ───────────────────
 async function doSignup() {
   const name  = document.getElementById('s-name').value.trim();
   const email = document.getElementById('s-email').value.trim();
@@ -206,17 +214,83 @@ async function doSignup() {
 
   if (!ok) { showToast(data.message || 'Signup failed'); return; }
 
-  // Show success state — user must verify email before they can log in
+  // Send OTP via EmailJS from the browser
+  await sendOTPEmail(data.email, data.name, data.otp);
+
+  // Show OTP input screen
+  showOTPScreen(email, name);
+}
+
+// ── Send OTP email via EmailJS ────────────────────────────────────────────────
+async function sendOTPEmail(email, name, otp) {
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+      to_email: email,
+      to_name:  name,
+      otp:      otp,
+    });
+  } catch (err) {
+    console.error('EmailJS error:', err);
+    showToast('Could not send OTP email — check EmailJS config');
+  }
+}
+
+// ── Show OTP verification screen ──────────────────────────────────────────────
+function showOTPScreen(email, name) {
   document.getElementById('auth-signup').innerHTML = `
-    <div style="text-align:center;padding:20px 0">
-      <div style="font-size:40px;margin-bottom:12px">📧</div>
-      <div style="font-size:15px;font-weight:600;color:var(--cream);margin-bottom:8px">Check your inbox!</div>
-      <div style="font-size:13px;color:var(--cream-m);line-height:1.6">
-        We sent a verification link to<br><strong style="color:var(--amber)">${email}</strong><br><br>
-        Click the link in the email to activate your account, then come back to log in.
+    <div style="text-align:center;padding:10px 0">
+      <div style="font-size:36px;margin-bottom:10px">📧</div>
+      <div style="font-size:15px;font-weight:600;color:var(--cream);margin-bottom:6px">Check your inbox!</div>
+      <div style="font-size:12px;color:var(--cream-m);margin-bottom:20px">
+        We sent a 6-digit OTP to<br><strong style="color:var(--amber)">${email}</strong><br>
+        <span style="font-size:11px">Valid for 10 minutes</span>
       </div>
-      <button class="btn-primary" style="margin-top:20px" onclick="switchAuthTab('login')">Go to Login →</button>
+      <div class="form-group">
+        <label>Enter OTP</label>
+        <input type="text" id="otp-input" placeholder="000000" maxlength="6"
+          style="text-align:center;font-size:24px;letter-spacing:8px;font-weight:700"
+          oninput="this.value=this.value.replace(/[^0-9]/g,'')" />
+      </div>
+      <button class="btn-primary" onclick="doVerifyOTP('${email}')">Verify OTP</button>
+      <div style="margin-top:12px;font-size:12px;color:var(--cream-m)">
+        Didn't get it? <a onclick="doResendOTP('${email}','${name}')" style="color:var(--amber);cursor:pointer">Resend OTP</a>
+      </div>
     </div>`;
+}
+
+// ── Verify OTP ────────────────────────────────────────────────────────────────
+async function doVerifyOTP(email) {
+  const otp = document.getElementById('otp-input')?.value.trim();
+  if (!otp || otp.length !== 6) { showToast('Enter the 6-digit OTP'); return; }
+
+  const btn = document.querySelector('#auth-signup .btn-primary');
+  btn.disabled = true; btn.textContent = 'Verifying…';
+
+  const { ok, data } = await apiFetch('/auth/verify-otp', {
+    method: 'POST',
+    body: JSON.stringify({ email, otp }),
+  });
+
+  btn.disabled = false; btn.textContent = 'Verify OTP';
+
+  if (!ok) { showToast(data.message || 'Invalid OTP'); return; }
+
+  // Auto-login after verification
+  localStorage.setItem('cafe_token', data.token);
+  S.currentUser = data.user;
+  showView('session');
+  showToast('Welcome, ' + data.user.name + '! 🎉');
+}
+
+// ── Resend OTP ────────────────────────────────────────────────────────────────
+async function doResendOTP(email, name) {
+  const { ok, data } = await apiFetch('/auth/resend-otp', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+  if (!ok) { showToast(data.message || 'Error'); return; }
+  await sendOTPEmail(data.email, data.name, data.otp);
+  showToast('New OTP sent to ' + email);
 }
 
 // ── Logout ────────────────────────────────────────────────────────────────────
