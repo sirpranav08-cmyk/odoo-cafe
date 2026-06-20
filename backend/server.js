@@ -7,6 +7,7 @@ const path     = require("path");
 
 const { router: authRouter } = require("./routes/auth");
 const productRouter           = require("./routes/products");
+const dataRouter              = require("./routes/data");
 
 const app = express();
 
@@ -20,6 +21,7 @@ app.use(express.static(path.join(__dirname, "../frontend")));
 // ── API Routes ────────────────────────────────────────────────────────────────
 app.use("/api/auth",     authRouter);
 app.use("/api/products", productRouter);
+app.use("/api/data",     dataRouter);
 
 // Health check
 app.get("/api/health", (_, res) => res.json({ status: "ok", time: new Date() }));

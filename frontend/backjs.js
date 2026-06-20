@@ -138,6 +138,7 @@ async function doLogin() {
 
   localStorage.setItem('cafe_token', data.token);
   S.currentUser = data.user;
+  await loadAppData();
   showView('session');
   showToast('Welcome back, ' + data.user.name + '!');
 }
@@ -362,6 +363,7 @@ async function doVerifyOTP(email) {
   // Auto-login after verification
   localStorage.setItem('cafe_token', data.token);
   S.currentUser = data.user;
+  await loadAppData();
   showView('session');
   showToast('Welcome, ' + data.user.name + '! 🎉');
 }
@@ -391,10 +393,47 @@ async function tryRestoreSession() {
   const { ok, data } = await apiFetch('/auth/me');
   if (ok) {
     S.currentUser = data;
+    await loadAppData();
     showView('session');
   } else {
     localStorage.removeItem('cafe_token');
   }
+}
+
+// ── Load all app data from MongoDB after login ────────────────────────────────
+async function loadAppData() {
+  // Seed default data on first run
+  await apiFetch('/data/seed', { method: 'POST' });
+
+  const { ok, data } = await apiFetch('/data/bootstrap');
+  if (!ok) return;
+
+  // Map DB products/categories to the shape S expects
+  S.categories = data.categories.map(c => ({
+    id: c._id, _id: c._id, name: c.name, color: c.color
+  }));
+
+  S.products = data.products.map(p => ({
+    id: p._id, _id: p._id,
+    name: p.name,
+    category: p.category?._id || p.category,
+    categoryName: p.category?.name || '',
+    price: p.price, tax: p.tax, uom: p.uom, desc: p.desc, emoji: p.emoji
+  }));
+
+  S.orders = data.orders.map(o => ({
+    id: o._id, _id: o._id,
+    num: o.num, tableId: o.tableId, tableNum: o.tableNum,
+    customer: o.customer, customerId: o.customerId,
+    items: o.items, sub: o.sub, tax: o.tax,
+    disc: o.disc, discLabel: o.discLabel,
+    total: o.total, payMethod: o.payMethod,
+    status: o.status, date: o.date,
+  }));
+
+  // Determine next order number
+  const maxNum = S.orders.reduce((m, o) => Math.max(m, o.num || 0), 0);
+  S.orderNum = maxNum + 1;
 }
 
 function renderSession() {
@@ -618,18 +657,33 @@ function changePassword(id) { const u = S.users.find(x => x.id === id); if (!u) 
 // Form panel
 function openFormPanel() { document.getElementById('form-panel').classList.add('open') }
 function closeFormPanel() { document.getElementById('form-panel').classList.remove('open') }
-function saveForm() {
+async function saveForm() {
   const type = S.editingFormType, id = S.editingId;
+
   if (type === 'product') {
-    const d = { name: v('fp-name'), category: parseInt(v('fp-cat')), price: parseFloat(v('fp-price')) || 0, tax: parseInt(v('fp-tax')), uom: v('fp-uom'), desc: v('fp-desc'), emoji: v('fp-emoji') || '🍽' };
+    const d = { name: v('fp-name'), category: v('fp-cat'), price: parseFloat(v('fp-price')) || 0, tax: parseInt(v('fp-tax')), uom: v('fp-uom'), desc: v('fp-desc'), emoji: v('fp-emoji') || '🍽' };
     if (!d.name || !d.price) { showToast('Name and price required'); return; }
-    if (id) { Object.assign(S.products.find(x => x.id === id), d); } else { S.products.push({ id: Date.now(), ...d }); }
+    const { ok, data } = await apiFetch('/data/products' + (id ? '/'+id : ''), {
+      method: id ? 'PUT' : 'POST', body: JSON.stringify(d)
+    });
+    if (!ok) { showToast(data.message || 'Save failed'); return; }
+    const mapped = { id: data._id, _id: data._id, name: data.name, category: data.category?._id || data.category, price: data.price, tax: data.tax, uom: data.uom, desc: data.desc, emoji: data.emoji };
+    if (id) { const i = S.products.findIndex(x => x.id === id); if (i >= 0) S.products[i] = mapped; }
+    else S.products.push(mapped);
     renderProductsTable();
+
   } else if (type === 'category') {
     const d = { name: v('fp-name'), color: v('fp-color') || '#E8A020' };
     if (!d.name) { showToast('Name required'); return; }
-    if (id) { Object.assign(S.categories.find(x => x.id === id), d); } else { S.categories.push({ id: Date.now(), ...d }); }
+    const { ok, data } = await apiFetch('/data/categories' + (id ? '/'+id : ''), {
+      method: id ? 'PUT' : 'POST', body: JSON.stringify(d)
+    });
+    if (!ok) { showToast(data.message || 'Save failed'); return; }
+    const mapped = { id: data._id, _id: data._id, name: data.name, color: data.color };
+    if (id) { const i = S.categories.findIndex(x => x.id === id); if (i >= 0) S.categories[i] = mapped; }
+    else S.categories.push(mapped);
     renderCategoriesTable();
+
   } else if (type === 'promo') {
     const type2 = v('fp-type');
     const d = {
@@ -640,10 +694,12 @@ function saveForm() {
     if (!d.name) { showToast('Name required'); return; }
     if (id) { Object.assign(S.promotions.find(x => x.id === id), d); } else { S.promotions.push({ id: Date.now(), ...d }); }
     renderPromosTable();
+
   } else if (type === 'floor') {
     const d = { num: parseInt(v('fp-num')) || 1, floor: v('fp-floor') || 'Main Floor', seats: parseInt(v('fp-seats')) || 2, active: document.getElementById('fp-active').checked };
     if (id) { Object.assign(S.floors.find(x => x.id === id), d); } else { S.floors.push({ id: Date.now(), ...d }); }
     renderFloorsTable();
+
   } else if (type === 'user') {
     const d = { name: v('fp-name'), email: v('fp-email'), role: v('fp-role'), status: v('fp-status') };
     if (!d.name || !d.email) { showToast('Name and email required'); return; }
@@ -651,11 +707,20 @@ function saveForm() {
     else { if (!v('fp-pass')) { showToast('Password required'); return; } S.users.push({ id: Date.now(), ...d, password: v('fp-pass') }); }
     renderUsersTable();
   }
+
   closeFormPanel(); showToast('Saved!');
 }
-function deleteItem(col, id) {
+async function deleteItem(col, id) {
   if (!confirm('Delete this record?')) return;
-  S[col] = S[col].filter(x => x.id !== id);
+  if (col === 'products') {
+    await apiFetch('/data/products/' + id, { method: 'DELETE' });
+    S.products = S.products.filter(x => x.id !== id);
+  } else if (col === 'categories') {
+    await apiFetch('/data/categories/' + id, { method: 'DELETE' });
+    S.categories = S.categories.filter(x => x.id !== id);
+  } else {
+    S[col] = S[col].filter(x => x.id !== id);
+  }
   renderBackend(); showToast('Deleted');
 }
 function v(id) { const el = document.getElementById(id); return el ? el.value : '' }
@@ -986,14 +1051,25 @@ function calcChange() {
   document.getElementById('change-due').textContent = '₹' + change;
 }
 
-function confirmPayment() {
+async function confirmPayment() {
   const { sub, tax, disc, discLabel, total } = calcTotals();
-  const order = {
-    id: Date.now(), num: S.orderNum++, tableId: S.currentTable?.id, customer: S.currentCustomer?.name || 'Guest',
-    customerId: S.currentCustomer?.id, items: [...S.cart], sub, tax, disc, discLabel, total,
-    payMethod: S.payMethod, coupon: S.coupon, status: 'paid', date: new Date().toISOString()
+  const orderData = {
+    tableId: S.currentTable?.id, tableNum: S.currentTable?.num,
+    customer: S.currentCustomer?.name || 'Guest',
+    customerId: S.currentCustomer?.id,
+    items: [...S.cart], sub, tax, disc, discLabel, total,
+    payMethod: S.payMethod, status: 'paid', date: new Date().toISOString()
   };
-  S.orders.push(order);
+
+  const { ok, data } = await apiFetch('/data/orders', {
+    method: 'POST',
+    body: JSON.stringify(orderData),
+  });
+
+  const order = ok ? { ...data, id: data._id, num: data.num } : { ...orderData, id: Date.now(), num: S.orderNum++ };
+  if (ok) S.orderNum = order.num + 1;
+  S.orders.unshift(order);
+
   closeOverlay('ov-payment');
   document.getElementById('success-sub').textContent = `₹${total} via ${S.payMethod} · Order #${String(order.num).padStart(5, '0')}`;
   openOverlay('ov-success');
