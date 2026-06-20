@@ -4,7 +4,6 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Odoo Cafe — Admin</title>
-  <script src="backjs.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
   <style>
     :root {
@@ -452,6 +451,563 @@
     <button class="btn-save" id="panel-save-btn" onclick="savePanel()">Save</button>
   </div>
 </div>
+
 <div class="toast" id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+// SHARED DATA — reads from localStorage written by backjs.js
+// ══════════════════════════════════════════════════════════
+const DEFAULT = {
+  users: [
+    { id: 1, name: 'Admin User', email: 'admin@cafe.com', password: 'password', role: 'admin', status: 'active', verified: true },
+    { id: 2, name: 'Eric',       email: 'eric@cafe.com',  password: 'emp123',   role: 'employee', status: 'active', verified: true },
+    { id: 3, name: 'Sara',       email: 'sara@cafe.com',  password: 'emp123',   role: 'employee', status: 'active', verified: true },
+  ],
+  categories: [
+    { id: 1, name: 'Beverages', color: '#4A90D9' },
+    { id: 2, name: 'Chaat',     color: '#E8A020' },
+    { id: 3, name: 'Meals',     color: '#D94F3D' },
+    { id: 4, name: 'Dessert',   color: '#9B59B6' },
+  ],
+  products: [
+    { id: 1,  name: 'Masala Tea',   category: 1, price: 40,  tax: 5, uom: 'piece', desc: 'Spiced Indian tea',       emoji: '🍵' },
+    { id: 2,  name: 'Coffee',       category: 1, price: 60,  tax: 5, uom: 'piece', desc: 'Freshly brewed',          emoji: '☕' },
+    { id: 3,  name: 'Lassi',        category: 1, price: 80,  tax: 5, uom: 'piece', desc: 'Sweet yogurt drink',      emoji: '🥛' },
+    { id: 4,  name: 'Lemonade',     category: 1, price: 50,  tax: 5, uom: 'piece', desc: 'Fresh squeeze',           emoji: '🍋' },
+    { id: 5,  name: 'Samosa',       category: 2, price: 30,  tax: 5, uom: 'piece', desc: 'Crispy fried pastry',     emoji: '🥟' },
+    { id: 6,  name: 'Pav Bhaji',    category: 2, price: 90,  tax: 5, uom: 'piece', desc: 'Spiced mashed veggies',   emoji: '🍛' },
+    { id: 7,  name: 'Bhel Puri',    category: 2, price: 60,  tax: 5, uom: 'piece', desc: 'Crispy puffed rice',      emoji: '🍿' },
+    { id: 8,  name: 'Vada Pav',     category: 2, price: 35,  tax: 5, uom: 'piece', desc: 'Mumbai street burger',    emoji: '🍔' },
+    { id: 9,  name: 'Chees Burger', category: 3, price: 150, tax: 5, uom: 'piece', desc: 'Grilled with cheese',     emoji: '🍔' },
+    { id: 10, name: 'Pizza',        category: 3, price: 250, tax: 5, uom: 'piece', desc: 'Stone baked',             emoji: '🍕' },
+    { id: 11, name: 'Maggie',       category: 3, price: 70,  tax: 5, uom: 'piece', desc: 'Spiced noodles',          emoji: '🍜' },
+    { id: 12, name: 'Fries',        category: 3, price: 120, tax: 5, uom: 'piece', desc: 'Golden crispy',           emoji: '🍟' },
+    { id: 13, name: 'Gulab Jamun',  category: 4, price: 60,  tax: 5, uom: 'piece', desc: 'Syrup soaked sweets',     emoji: '🍮' },
+    { id: 14, name: 'Ice Cream',    category: 4, price: 80,  tax: 5, uom: 'piece', desc: 'Vanilla scoop',           emoji: '🍨' },
+    { id: 15, name: 'Brownie',      category: 4, price: 100, tax: 5, uom: 'piece', desc: 'Warm chocolate',          emoji: '🍫' },
+    { id: 16, name: 'Jalebi',       category: 4, price: 50,  tax: 5, uom: 'piece', desc: 'Crispy & sweet',          emoji: '🍩' },
+  ],
+  paymentMethods: [
+    { id: 1, name: 'Cash',         type: 'cash', enabled: true,  icon: '💵' },
+    { id: 2, name: 'UPI',          type: 'upi',  enabled: true,  icon: '📱', upiId: 'odoo_cafe@ybl' },
+    { id: 3, name: 'Card / Digital', type: 'card', enabled: true, icon: '💳' },
+  ],
+  promotions: [
+    { id: 1, name: 'SUMMER20',     type: 'coupon',       code: 'SUMMER20', discType: 'pct',   discVal: 20, minAmt: 0,   minQty: 0, active: true },
+    { id: 2, name: 'FLAT50',       type: 'coupon',       code: 'FLAT50',   discType: 'fixed', discVal: 50, minAmt: 0,   minQty: 0, active: true },
+    { id: 3, name: 'Happy Hour',   type: 'auto_order',                     discType: 'pct',   discVal: 15, minAmt: 300, active: true },
+    { id: 4, name: 'Buy 3 Samosa', type: 'auto_product', productId: 5,     discType: 'pct',   discVal: 10, minQty: 3,  active: true },
+  ],
+  floors: [
+    { id: 1, num: 1, floor: 'Main Floor', seats: 4, active: true },
+    { id: 2, num: 2, floor: 'Main Floor', seats: 2, active: true },
+    { id: 3, num: 3, floor: 'Main Floor', seats: 6, active: true },
+    { id: 4, num: 4, floor: 'Main Floor', seats: 4, active: true },
+    { id: 5, num: 5, floor: 'Main Floor', seats: 2, active: true },
+    { id: 6, num: 6, floor: 'Terrace',    seats: 4, active: true },
+    { id: 7, num: 7, floor: 'Terrace',    seats: 4, active: true },
+    { id: 8, num: 8, floor: 'Terrace',    seats: 8, active: true },
+  ],
+  orders: [],
+  customers: [],
+};
+
+// ── Data helpers ──────────────────────────────────────────
+function getData(key) {
+  try { return JSON.parse(localStorage.getItem('cafe_' + key) || 'null') || DEFAULT[key]; }
+  catch { return DEFAULT[key]; }
+}
+function saveData(key, val) { localStorage.setItem('cafe_' + key, JSON.stringify(val)); }
+function getAll() {
+  return {
+    users:          getData('users'),
+    categories:     getData('categories'),
+    products:       getData('products'),
+    paymentMethods: getData('paymentMethods'),
+    promotions:     getData('promotions'),
+    floors:         getData('floors'),
+    orders:         getData('orders'),
+    customers:      getData('customers'),
+  };
+}
+
+// ── Panel state ───────────────────────────────────────────
+let panelType = null, panelId = null;
+
+// ── Auth guard ────────────────────────────────────────────
+let currentAdmin = null;
+function checkAuth() {
+  try {
+    const raw = localStorage.getItem('cafe_session');
+    if (!raw) { window.location.href = 'homepage.html'; return false; }
+    const u = JSON.parse(raw);
+    if (!u || u.role !== 'admin') { window.location.href = 'homepage.html'; return false; }
+    currentAdmin = u;
+    document.getElementById('admin-name-display').textContent = u.name;
+    document.getElementById('admin-avatar').textContent = (u.name[0] || 'A').toUpperCase();
+    document.getElementById('guard').classList.remove('show');
+    return true;
+  } catch { window.location.href = 'homepage.html'; return false; }
+}
+
+function doAdminLogout() {
+  localStorage.removeItem('cafe_session');
+  window.location.href = 'homepage.html';
+}
+
+// ── Navigation ────────────────────────────────────────────
+function showSection(id, btn) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.getElementById('sec-' + id).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderSection(id);
+}
+
+function renderSection(id) {
+  if (id === 'dashboard')  renderDashboard();
+  if (id === 'users')      renderUsers();
+  if (id === 'products')   renderProducts();
+  if (id === 'categories') renderCategories();
+  if (id === 'floors')     renderFloors();
+  if (id === 'promotions') renderPromotions();
+  if (id === 'payment')    renderPaymentMethods();
+  if (id === 'reports')    renderReports();
+}
+
+// ── Search filter ─────────────────────────────────────────
+function filterTable(tbodyId, q, colIdxs) {
+  const rows = document.querySelectorAll('#' + tbodyId + ' tr');
+  rows.forEach(r => {
+    const text = colIdxs.map(i => r.cells[i]?.textContent.toLowerCase() || '').join(' ');
+    r.style.display = text.includes(q.toLowerCase()) ? '' : 'none';
+  });
+}
+
+// ── Toast ─────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────
+function renderDashboard() {
+  const d = getAll();
+  document.getElementById('d-products').textContent = d.products.length;
+  document.getElementById('d-users').textContent    = d.users.length;
+  document.getElementById('d-tables').textContent   = d.floors.filter(f => f.active).length;
+  document.getElementById('d-promos').textContent   = d.promotions.filter(p => p.active).length;
+  document.getElementById('dash-date').textContent  = new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  // Products by category chart
+  const catChart = document.getElementById('d-cat-chart');
+  const catCounts = {};
+  d.products.forEach(p => {
+    const cat = d.categories.find(c => c.id === p.category);
+    const n = cat?.name || 'Other';
+    catCounts[n] = (catCounts[n] || 0) + 1;
+  });
+  const maxCat = Math.max(...Object.values(catCounts), 1);
+  catChart.innerHTML = Object.entries(catCounts).map(([n, v]) => `
+    <div class="bar-row">
+      <div class="bar-label">${n}</div>
+      <div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(v/maxCat*100)}%"></div></div>
+      <div class="bar-val">${v} items</div>
+    </div>`).join('') || '<div style="color:var(--cream-m);font-size:12px">No data</div>';
+
+  // User roles chart
+  const roleChart = document.getElementById('d-role-chart');
+  const admins = d.users.filter(u => u.role === 'admin').length;
+  const emps   = d.users.filter(u => u.role === 'employee').length;
+  const total  = d.users.length || 1;
+  roleChart.innerHTML = `
+    <div class="bar-row"><div class="bar-label">Admin</div><div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(admins/total*100)}%;background:var(--amber)"></div></div><div class="bar-val">${admins}</div></div>
+    <div class="bar-row"><div class="bar-label">Employee</div><div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(emps/total*100)}%;background:var(--blue)"></div></div><div class="bar-val">${emps}</div></div>
+    <div class="bar-row"><div class="bar-label">Active</div><div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(d.users.filter(u=>u.status==='active').length/total*100)}%;background:var(--green)"></div></div><div class="bar-val">${d.users.filter(u=>u.status==='active').length}</div></div>`;
+}
+
+// ── USERS ─────────────────────────────────────────────────
+function renderUsers() {
+  const users = getData('users');
+  document.getElementById('users-tbody').innerHTML = users.map(u => `<tr>
+    <td style="font-weight:500">${u.name}</td>
+    <td style="color:var(--cream-m);font-size:12px">${u.email}</td>
+    <td><span class="badge ${u.role==='admin'?'badge-admin':'badge-emp'}">${u.role==='admin'?'Admin':'Employee'}</span></td>
+    <td><span class="badge ${u.status==='active'?'badge-active':'badge-inactive'}">${u.status}</span></td>
+    <td><span class="badge ${u.verified?'badge-active':'badge-pending'}">${u.verified?'✓ Verified':'Pending'}</span></td>
+    <td><div class="tbl-actions">
+      <button class="tbl-btn" onclick="openUserPanel(${u.id})">Edit</button>
+      <button class="tbl-btn" onclick="toggleUserStatus(${u.id})">${u.status==='active'?'Archive':'Activate'}</button>
+      <button class="tbl-btn danger" onclick="deleteRecord('users',${u.id})">Delete</button>
+    </div></td>
+  </tr>`).join('');
+}
+
+function openUserPanel(id = null) {
+  panelType = 'user'; panelId = id;
+  const users = getData('users');
+  const u = id ? users.find(x => x.id === id) : { name: '', email: '', password: '', role: 'employee', status: 'active', verified: false };
+  document.getElementById('panel-title').textContent = id ? 'Edit User' : 'New User';
+  document.getElementById('panel-body').innerHTML = `
+    <div class="fp-group"><label>Full Name *</label><input type="text" id="fp-name" value="${u.name}" placeholder="e.g. John Doe"/></div>
+    <div class="fp-group"><label>Email *</label><input type="email" id="fp-email" value="${u.email}" placeholder="user@cafe.com"/></div>
+    ${!id ? '<div class="fp-group"><label>Password *</label><input type="password" id="fp-pass" placeholder="Min. 6 characters"/></div>' : ''}
+    <div class="fp-group"><label>Role</label><select id="fp-role">
+      <option value="admin"   ${u.role==='admin'?'selected':''}>Admin</option>
+      <option value="employee"${u.role==='employee'?'selected':''}>Employee / Cashier</option>
+    </select></div>
+    <div class="fp-group"><label>Status</label><select id="fp-status">
+      <option value="active"  ${u.status==='active'?'selected':''}>Active</option>
+      <option value="inactive"${u.status==='inactive'?'selected':''}>Inactive</option>
+    </select></div>
+    <div class="fp-group"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="fp-verified" ${u.verified?'checked':''}/> Email Verified</label></div>`;
+  openPanel();
+}
+
+function toggleUserStatus(id) {
+  const users = getData('users');
+  const u = users.find(x => x.id === id);
+  if (!u) return;
+  if (u.id === currentAdmin?.id) { showToast("Can't archive your own account"); return; }
+  u.status = u.status === 'active' ? 'inactive' : 'active';
+  saveData('users', users);
+  renderUsers();
+  showToast(u.name + ' ' + (u.status === 'active' ? 'activated' : 'archived'));
+}
+
+// ── PRODUCTS ─────────────────────────────────────────────
+function renderProducts() {
+  const { products, categories } = getAll();
+  document.getElementById('products-tbody').innerHTML = products.map(p => {
+    const cat = categories.find(c => c.id === p.category) || { name: '—', color: '#888' };
+    return `<tr>
+      <td><span style="font-size:16px;margin-right:6px">${p.emoji}</span>${p.name}</td>
+      <td><span style="color:${cat.color};font-weight:600;font-size:12px">${cat.name}</span></td>
+      <td style="color:var(--amber);font-weight:700">₹${p.price}</td>
+      <td>${p.tax}%</td><td>${p.uom}</td>
+      <td><div class="tbl-actions">
+        <button class="tbl-btn" onclick="openProductPanel(${p.id})">Edit</button>
+        <button class="tbl-btn danger" onclick="deleteRecord('products',${p.id})">Delete</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+function openProductPanel(id = null) {
+  panelType = 'product'; panelId = id;
+  const { products, categories } = getAll();
+  const p = id ? products.find(x => x.id === id) : { name: '', category: categories[0]?.id || 1, price: '', tax: 5, uom: 'piece', desc: '', emoji: '🍽' };
+  document.getElementById('panel-title').textContent = id ? 'Edit Product' : 'New Product';
+  document.getElementById('panel-body').innerHTML = `
+    <div class="fp-group"><label>Emoji</label><input type="text" id="fp-emoji" value="${p.emoji}" maxlength="2"/></div>
+    <div class="fp-group"><label>Name *</label><input type="text" id="fp-name" value="${p.name}" placeholder="e.g. Masala Tea"/></div>
+    <div class="fp-group"><label>Category</label><select id="fp-cat">
+      ${categories.map(c => `<option value="${c.id}"${c.id===p.category?' selected':''}>${c.name}</option>`).join('')}
+    </select></div>
+    <div class="fp-group"><label>Price (₹) *</label><input type="number" id="fp-price" value="${p.price}" placeholder="0"/></div>
+    <div class="fp-group"><label>Tax (%)</label><select id="fp-tax">
+      ${[0,5,12,18,28].map(t => `<option value="${t}"${p.tax==t?' selected':''}>${t}%</option>`).join('')}
+    </select></div>
+    <div class="fp-group"><label>Unit of Measure</label><select id="fp-uom">
+      <option value="piece" ${p.uom==='piece'?'selected':''}>Per Piece</option>
+      <option value="kg"    ${p.uom==='kg'?'selected':''}>Per Kg</option>
+      <option value="litre" ${p.uom==='litre'?'selected':''}>Per Litre</option>
+    </select></div>
+    <div class="fp-group"><label>Description</label><textarea id="fp-desc" rows="2">${p.desc}</textarea></div>`;
+  openPanel();
+}
+
+// ── CATEGORIES ────────────────────────────────────────────
+function renderCategories() {
+  const { categories, products } = getAll();
+  document.getElementById('categories-tbody').innerHTML = categories.map(c => {
+    const cnt = products.filter(p => p.category === c.id).length;
+    return `<tr>
+      <td style="font-weight:500">${c.name}</td>
+      <td><span style="display:inline-block;width:14px;height:14px;border-radius:4px;background:${c.color};margin-right:6px;vertical-align:middle"></span>${c.color}</td>
+      <td>${cnt} products</td>
+      <td><div class="tbl-actions">
+        <button class="tbl-btn" onclick="openCategoryPanel(${c.id})">Edit</button>
+        <button class="tbl-btn danger" onclick="deleteRecord('categories',${c.id})">Delete</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+function openCategoryPanel(id = null) {
+  panelType = 'category'; panelId = id;
+  const categories = getData('categories');
+  const c = id ? categories.find(x => x.id === id) : { name: '', color: '#E8A020' };
+  const colors = ['#E8A020','#D94F3D','#5BA46A','#4A90D9','#9B59B6','#E67E22','#1ABC9C','#E84393'];
+  document.getElementById('panel-title').textContent = id ? 'Edit Category' : 'New Category';
+  document.getElementById('panel-body').innerHTML = `
+    <div class="fp-group"><label>Name *</label><input type="text" id="fp-name" value="${c.name}" placeholder="e.g. Beverages"/></div>
+    <div class="fp-group"><label>Color</label>
+      <div class="color-grid">${colors.map(col => `<div class="color-swatch${col===c.color?' selected':''}" style="background:${col}" onclick="pickColor('${col}',this)"></div>`).join('')}</div>
+      <input type="text" id="fp-color" value="${c.color}" placeholder="#E8A020" style="margin-top:8px"/>
+    </div>`;
+  openPanel();
+}
+
+function pickColor(col, el) {
+  document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
+  el.classList.add('selected');
+  document.getElementById('fp-color').value = col;
+}
+
+// ── FLOORS ────────────────────────────────────────────────
+function renderFloors() {
+  const floors = getData('floors');
+  document.getElementById('floors-tbody').innerHTML = floors.map(t => `<tr>
+    <td style="font-weight:700;color:var(--amber)">Table ${t.num}</td>
+    <td>${t.floor}</td>
+    <td>${t.seats} seats</td>
+    <td><span class="badge ${t.active?'badge-active':'badge-inactive'}">${t.active?'Active':'Inactive'}</span></td>
+    <td><div class="tbl-actions">
+      <button class="tbl-btn" onclick="openFloorPanel(${t.id})">Edit</button>
+      <button class="tbl-btn danger" onclick="deleteRecord('floors',${t.id})">Delete</button>
+    </div></td>
+  </tr>`).join('');
+}
+
+function openFloorPanel(id = null) {
+  panelType = 'floor'; panelId = id;
+  const floors = getData('floors');
+  const t = id ? floors.find(x => x.id === id) : { num: '', floor: 'Main Floor', seats: 4, active: true };
+  document.getElementById('panel-title').textContent = id ? 'Edit Table' : 'New Table';
+  document.getElementById('panel-body').innerHTML = `
+    <div class="fp-group"><label>Table Number *</label><input type="number" id="fp-num" value="${t.num}" placeholder="e.g. 9"/></div>
+    <div class="fp-group"><label>Floor / Area</label><input type="text" id="fp-floor" value="${t.floor}" placeholder="Main Floor"/></div>
+    <div class="fp-group"><label>Seats</label><input type="number" id="fp-seats" value="${t.seats}" min="1" max="20"/></div>
+    <div class="fp-group"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="fp-active" ${t.active?'checked':''}/> Active</label></div>`;
+  openPanel();
+}
+
+// ── PROMOTIONS ────────────────────────────────────────────
+function renderPromotions() {
+  const promotions = getData('promotions');
+  document.getElementById('promotions-tbody').innerHTML = promotions.map(p => {
+    const cond = p.type==='coupon' ? `Code: <strong>${p.code}</strong>` : p.type==='auto_product' ? `Min Qty: ${p.minQty}` : `Min ₹${p.minAmt}`;
+    return `<tr>
+      <td style="font-weight:600">${p.name}</td>
+      <td style="font-size:11px;color:var(--cream-m)">${p.type==='coupon'?'Coupon':p.type==='auto_product'?'Auto (Product)':'Auto (Order)'}</td>
+      <td style="color:var(--green)">${p.discType==='pct'?p.discVal+'%':'₹'+p.discVal} off</td>
+      <td style="font-size:12px">${cond}</td>
+      <td><span class="badge ${p.active?'badge-active':'badge-inactive'}">${p.active?'Active':'Inactive'}</span></td>
+      <td><div class="tbl-actions">
+        <button class="tbl-btn" onclick="openPromoPanel(${p.id})">Edit</button>
+        <button class="tbl-btn danger" onclick="deleteRecord('promotions',${p.id})">Delete</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+function openPromoPanel(id = null) {
+  panelType = 'promo'; panelId = id;
+  const promotions = getData('promotions');
+  const p = id ? promotions.find(x => x.id === id) : { name:'', type:'coupon', code:'', discType:'pct', discVal:10, minAmt:0, minQty:1, active:true };
+  document.getElementById('panel-title').textContent = id ? 'Edit Promotion' : 'New Promotion';
+  document.getElementById('panel-body').innerHTML = `
+    <div class="fp-group"><label>Name *</label><input type="text" id="fp-name" value="${p.name}"/></div>
+    <div class="fp-group"><label>Type</label><select id="fp-type" onchange="refreshPromoCond()">
+      <option value="coupon"      ${p.type==='coupon'?'selected':''}>Coupon Code</option>
+      <option value="auto_order"  ${p.type==='auto_order'?'selected':''}>Auto – Order Amount</option>
+      <option value="auto_product"${p.type==='auto_product'?'selected':''}>Auto – Product Qty</option>
+    </select></div>
+    <div id="promo-cond"></div>
+    <div class="fp-group"><label>Discount Type</label><select id="fp-disc-type">
+      <option value="pct"  ${p.discType==='pct'?'selected':''}>Percentage (%)</option>
+      <option value="fixed"${p.discType==='fixed'?'selected':''}>Fixed (₹)</option>
+    </select></div>
+    <div class="fp-group"><label>Discount Value *</label><input type="number" id="fp-disc-val" value="${p.discVal}"/></div>
+    <div class="fp-group"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="fp-active" ${p.active?'checked':''}/> Active</label></div>`;
+  refreshPromoCond(p);
+  openPanel();
+}
+
+function refreshPromoCond(p = null) {
+  const type = document.getElementById('fp-type')?.value || 'coupon';
+  const wrap = document.getElementById('promo-cond');
+  if (!wrap) return;
+  if (type === 'coupon')       wrap.innerHTML = `<div class="fp-group"><label>Coupon Code</label><input type="text" id="fp-code" value="${p?.code||''}"/></div>`;
+  else if (type === 'auto_order') wrap.innerHTML = `<div class="fp-group"><label>Min Order Amount (₹)</label><input type="number" id="fp-minamt" value="${p?.minAmt||0}"/></div>`;
+  else                         wrap.innerHTML = `<div class="fp-group"><label>Min Quantity</label><input type="number" id="fp-minqty" value="${p?.minQty||1}"/></div>`;
+}
+
+// ── PAYMENT METHODS ───────────────────────────────────────
+function renderPaymentMethods() {
+  const pms = getData('paymentMethods');
+  document.getElementById('payment-list').innerHTML = pms.map(pm => `
+    <div class="card" style="margin-bottom:12px;padding:16px 20px;display:flex;align-items:center;gap:16px">
+      <span style="font-size:24px">${pm.icon}</span>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:600">${pm.name}</div>
+        ${pm.type==='upi'?`<div style="font-size:12px;color:var(--cream-m);margin-top:2px">UPI ID: <span style="color:var(--amber)">${pm.upiId||'Not set'}</span></div>`:''}
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--cream-m)">
+        <input type="checkbox" ${pm.enabled?'checked':''} onchange="togglePM(${pm.id},this.checked)"/> Enabled
+      </label>
+      ${pm.type==='upi'?`<button class="tbl-btn" onclick="editUPI(${pm.id})">Edit UPI ID</button>`:''}
+    </div>`).join('');
+}
+
+function togglePM(id, val) {
+  const pms = getData('paymentMethods');
+  const pm = pms.find(p => p.id === id);
+  if (pm) { pm.enabled = val; saveData('paymentMethods', pms); renderPaymentMethods(); showToast(pm.name + (val?' enabled':' disabled')); }
+}
+function editUPI(id) {
+  const pms = getData('paymentMethods');
+  const pm = pms.find(p => p.id === id);
+  if (!pm) return;
+  const v = prompt('Enter UPI ID:', pm.upiId || '');
+  if (v !== null) { pm.upiId = v; saveData('paymentMethods', pms); renderPaymentMethods(); showToast('UPI ID updated'); }
+}
+
+// ── REPORTS ───────────────────────────────────────────────
+function renderReports() {
+  const { orders, products, categories, customers } = getAll();
+  const paid = orders.filter(o => o.status === 'paid');
+  const rev  = paid.reduce((s, o) => s + (o.total || 0), 0);
+
+  document.getElementById('r-orders').textContent  = paid.length;
+  document.getElementById('r-revenue').textContent = '₹' + rev;
+  document.getElementById('r-avg').textContent     = paid.length ? '₹' + Math.round(rev / paid.length) : '₹0';
+  document.getElementById('r-custs').textContent   = customers.length;
+
+  // Top products
+  const pmap = {};
+  paid.forEach(o => (o.items||[]).forEach(it => { pmap[it.name] = (pmap[it.name]||0) + it.qty * it.price; }));
+  const tops = Object.entries(pmap).sort((a,b) => b[1]-a[1]).slice(0,5);
+  const maxp = tops[0] ? tops[0][1] : 1;
+  document.getElementById('r-top-products').innerHTML = tops.map(([n,v]) => `
+    <div class="bar-row"><div class="bar-label">${n}</div><div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(v/maxp*100)}%"></div></div><div class="bar-val">₹${v}</div></div>`
+  ).join('') || '<div style="color:var(--cream-m);font-size:12px">No data yet</div>';
+
+  // Top categories
+  const cmap = {};
+  paid.forEach(o => (o.items||[]).forEach(it => {
+    const prod = products.find(p => p.name === it.name);
+    const cat  = prod ? categories.find(c => c.id === prod.category) : null;
+    const cn   = cat?.name || 'Other';
+    cmap[cn] = (cmap[cn]||0) + it.qty * it.price;
+  }));
+  const topc = Object.entries(cmap).sort((a,b) => b[1]-a[1]).slice(0,5);
+  const maxc = topc[0] ? topc[0][1] : 1;
+  document.getElementById('r-top-cats').innerHTML = topc.map(([n,v]) => `
+    <div class="bar-row"><div class="bar-label">${n}</div><div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(v/maxc*100)}%;background:var(--blue)"></div></div><div class="bar-val">₹${v}</div></div>`
+  ).join('') || '<div style="color:var(--cream-m);font-size:12px">No data yet</div>';
+
+  // Recent orders table
+  document.getElementById('r-orders-tbody').innerHTML = paid.slice(-15).reverse().map(o => `<tr>
+    <td style="color:var(--amber)">#${String(o.num||0).padStart(5,'0')}</td>
+    <td>${o.customer||'Guest'}</td>
+    <td style="font-weight:700">₹${o.total}</td>
+    <td>${o.payMethod||'—'}</td>
+    <td><span class="badge badge-active">paid</span></td>
+    <td style="color:var(--cream-m);font-size:11px">${new Date(o.date).toLocaleString('en-IN',{dateStyle:'short',timeStyle:'short'})}</td>
+  </tr>`).join('') || '<tr><td colspan="6" style="color:var(--cream-m);padding:16px;font-size:12px">No orders yet</td></tr>';
+}
+
+// ── SETTINGS ─────────────────────────────────────────────
+function saveSettings() {
+  const cfg = {
+    name:     document.getElementById('cfg-name').value,
+    address:  document.getElementById('cfg-addr').value,
+    phone:    document.getElementById('cfg-phone').value,
+    gst:      document.getElementById('cfg-gst').value,
+    currency: document.getElementById('cfg-currency').value,
+    tax:      document.getElementById('cfg-tax').value,
+  };
+  localStorage.setItem('cafe_config', JSON.stringify(cfg));
+  showToast('Settings saved!');
+}
+
+// ── PANEL HELPERS ─────────────────────────────────────────
+function openPanel() {
+  document.getElementById('panel-overlay').classList.add('open');
+  document.getElementById('side-panel').classList.add('open');
+}
+function closePanel() {
+  document.getElementById('panel-overlay').classList.remove('open');
+  document.getElementById('side-panel').classList.remove('open');
+}
+function fv(id) { const el = document.getElementById(id); return el ? el.value : ''; }
+
+function savePanel() {
+  const type = panelType, id = panelId;
+
+  if (type === 'user') {
+    const users = getData('users');
+    const d = { name: fv('fp-name'), email: fv('fp-email'), role: fv('fp-role'), status: fv('fp-status'), verified: document.getElementById('fp-verified')?.checked || false };
+    if (!d.name || !d.email) { showToast('Name and email required'); return; }
+    if (id) {
+      Object.assign(users.find(x => x.id === id), d);
+    } else {
+      const pass = fv('fp-pass');
+      if (!pass) { showToast('Password required'); return; }
+      users.push({ id: Date.now(), ...d, password: pass });
+    }
+    saveData('users', users); renderUsers();
+
+  } else if (type === 'product') {
+    const products = getData('products');
+    const d = { name: fv('fp-name'), category: parseInt(fv('fp-cat')), price: parseFloat(fv('fp-price'))||0, tax: parseInt(fv('fp-tax')), uom: fv('fp-uom'), desc: fv('fp-desc'), emoji: fv('fp-emoji')||'🍽' };
+    if (!d.name || !d.price) { showToast('Name and price required'); return; }
+    if (id) { Object.assign(products.find(x => x.id === id), d); } else { products.push({ id: Date.now(), ...d }); }
+    saveData('products', products); renderProducts();
+
+  } else if (type === 'category') {
+    const categories = getData('categories');
+    const d = { name: fv('fp-name'), color: fv('fp-color')||'#E8A020' };
+    if (!d.name) { showToast('Name required'); return; }
+    if (id) { Object.assign(categories.find(x => x.id === id), d); } else { categories.push({ id: Date.now(), ...d }); }
+    saveData('categories', categories); renderCategories();
+
+  } else if (type === 'floor') {
+    const floors = getData('floors');
+    const d = { num: parseInt(fv('fp-num'))||1, floor: fv('fp-floor')||'Main Floor', seats: parseInt(fv('fp-seats'))||2, active: document.getElementById('fp-active').checked };
+    if (id) { Object.assign(floors.find(x => x.id === id), d); } else { floors.push({ id: Date.now(), ...d }); }
+    saveData('floors', floors); renderFloors();
+
+  } else if (type === 'promo') {
+    const promotions = getData('promotions');
+    const t2 = fv('fp-type');
+    const d = { name: fv('fp-name'), type: t2, discType: fv('fp-disc-type'), discVal: parseFloat(fv('fp-disc-val'))||0, code: t2==='coupon'?fv('fp-code'):'', minAmt: t2==='auto_order'?parseFloat(fv('fp-minamt'))||0:0, minQty: t2==='auto_product'?parseInt(fv('fp-minqty'))||1:0, active: document.getElementById('fp-active').checked };
+    if (!d.name) { showToast('Name required'); return; }
+    if (id) { Object.assign(promotions.find(x => x.id === id), d); } else { promotions.push({ id: Date.now(), ...d }); }
+    saveData('promotions', promotions); renderPromotions();
+  }
+
+  closePanel();
+  showToast('Saved successfully!');
+}
+
+function deleteRecord(key, id) {
+  if (!confirm('Delete this record? This cannot be undone.')) return;
+  const data = getData(key);
+  saveData(key, data.filter(x => x.id !== id));
+  renderSection(document.querySelector('.section.active')?.id?.replace('sec-', '') || '');
+  showToast('Deleted');
+}
+
+// ── INIT ─────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  if (!checkAuth()) return;
+  renderDashboard();
+  // Load saved settings
+  try {
+    const cfg = JSON.parse(localStorage.getItem('cafe_config') || '{}');
+    if (cfg.name)     document.getElementById('cfg-name').value     = cfg.name;
+    if (cfg.address)  document.getElementById('cfg-addr').value     = cfg.address;
+    if (cfg.phone)    document.getElementById('cfg-phone').value    = cfg.phone;
+    if (cfg.gst)      document.getElementById('cfg-gst').value      = cfg.gst;
+    if (cfg.currency) document.getElementById('cfg-currency').value = cfg.currency;
+    if (cfg.tax)      document.getElementById('cfg-tax').value      = cfg.tax;
+  } catch {}
+});
+</script>
 </body>
 </html>
