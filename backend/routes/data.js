@@ -1,5 +1,5 @@
 const express  = require("express");
-const Product  = require("../models/Product");
+const Product  = require("../Product");
 const Category = require("../models/Category");
 const Order    = require("../models/Order");
 const Counter  = require("../models/Counter");

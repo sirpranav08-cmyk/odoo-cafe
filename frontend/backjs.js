@@ -96,19 +96,46 @@ function switchAuthTab(tab) {
   if (vp && tab !== 'login') vp.remove();
 }
 
-// ── API helpers ───────────────────────────────────────────────────────────────
-const API = '/api';
-function authHeader() {
-  const token = localStorage.getItem('cafe_token');
-  return token ? { 'Authorization': 'Bearer ' + token } : {};
+// ══════════════════════════════════════════
+// EMAILJS CONFIG — replace with your keys
+// ══════════════════════════════════════════
+const EMAILJS_SERVICE_ID  = 'service_XXXXXXX';   // Your EmailJS Service ID
+const EMAILJS_TEMPLATE_ID = 'template_XXXXXXX';  // Your EmailJS Template ID
+const EMAILJS_PUBLIC_KEY  = 'XXXXXXXXXXXXXXXXXXXX'; // Your EmailJS Public Key
+
+// OTP store (in-memory, session only)
+const OTP_STORE = {}; // { email: { code, expiry, purpose } }
+
+function generateOTP() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
 }
-async function apiFetch(path, opts = {}) {
-  const res = await fetch(API + path, {
-    headers: { 'Content-Type': 'application/json', ...authHeader(), ...(opts.headers || {}) },
-    ...opts,
-  });
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, data };
+
+async function sendOTPEmail(toEmail, toName, otp, purpose) {
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+      to_email: toEmail,
+      to_name:  toName || toEmail.split('@')[0],
+      otp_code: otp,
+      purpose:  purpose === 'verify' ? 'Email Verification' : 'Password Reset',
+      cafe_name: 'Odoo Cafe',
+    }, EMAILJS_PUBLIC_KEY);
+    return true;
+  } catch (err) {
+    console.error('EmailJS error:', err);
+    return false;
+  }
+}
+
+// ── Local user DB helpers ─────────────────────────────────────────────────────
+function getUsers() {
+  try { return JSON.parse(localStorage.getItem('cafe_users') || 'null') || S.users; } catch { return S.users; }
+}
+function saveUsers(users) {
+  localStorage.setItem('cafe_users', JSON.stringify(users));
+  S.users = users;
+}
+function findUser(email) {
+  return getUsers().find(u => u.email.toLowerCase() === email.toLowerCase());
 }
 
 // ── Login ─────────────────────────────────────────────────────────────────────
@@ -120,164 +147,55 @@ async function doLogin() {
   const btn = document.querySelector('#auth-login .btn-primary');
   btn.disabled = true; btn.textContent = 'Signing in…';
 
-  const { ok, status, data } = await apiFetch('/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password: pass }),
-  });
+  const user = findUser(email);
 
   btn.disabled = false; btn.textContent = 'Open Session';
 
-  if (!ok) {
-    if (status === 403 && data.code === 'EMAIL_NOT_VERIFIED') {
-      showVerificationPrompt(email);
-    } else {
-      showToast(data.message || 'Login failed');
-    }
-    return;
+  if (!user || user.password !== pass) {
+    showToast('Invalid email or password'); return;
+  }
+  if (!user.verified) {
+    showLoginOTPPrompt(email, user.name); return;
+  }
+  if (user.status !== 'active') {
+    showToast('Your account is inactive. Contact admin.'); return;
   }
 
-  localStorage.setItem('cafe_token', data.token);
-  S.currentUser = data.user;
-  await loadAppData();
-  showView('session');
-  showToast('Welcome back, ' + data.user.name + '!');
+  localStorage.setItem('cafe_session', JSON.stringify({ id: user.id, name: user.name, email: user.email, role: user.role }));
+  S.currentUser = user;
+  if (user.role === 'admin') {
+    window.location.href = 'admin.html';
+  } else {
+    showView('session');
+    showToast('Welcome back, ' + user.name + '!');
+  }
 }
 
-// ── Show "resend verification" prompt ─────────────────────────────────────────
-function showVerificationPrompt(email) {
+// ── Show resend OTP prompt on login ──────────────────────────────────────────
+function showLoginOTPPrompt(email, name) {
   const existing = document.getElementById('verify-prompt');
   if (existing) existing.remove();
-
   const div = document.createElement('div');
   div.id = 'verify-prompt';
   div.style.cssText = 'margin-top:12px;padding:12px;background:rgba(232,160,32,0.1);border:1px solid rgba(232,160,32,0.3);border-radius:8px;font-size:12px;color:#B0A080;text-align:center';
-  div.innerHTML = `
-    <div style="margin-bottom:6px">📧 Please verify your email before logging in.</div>
-    <a onclick="resendVerification('${email}')" style="color:var(--amber);cursor:pointer;text-decoration:underline">Resend verification email</a>`;
+  div.innerHTML = `<div style="margin-bottom:6px">📧 Email not verified. Please verify to log in.</div>
+    <a onclick="resendVerificationOTP('${email}','${name}')" style="color:var(--amber);cursor:pointer;text-decoration:underline">Resend OTP</a>`;
   document.getElementById('auth-login').appendChild(div);
 }
 
-async function resendVerification(email) {
-  const { ok, data } = await apiFetch('/auth/resend-verification', {
-    method: 'POST',
-    body: JSON.stringify({ email }),
-  });
-  showToast(data.message || (ok ? 'Email sent!' : 'Error'));
-}
-
-// ── Forgot password — Step 1: request OTP ────────────────────────────────────
-async function doForgotPassword() {
-  const email = document.getElementById('f-email').value.trim();
-  if (!email) { showToast('Enter your email'); return; }
-
-  const btn = document.querySelector('#auth-forgot .btn-primary');
-  btn.disabled = true; btn.textContent = 'Sending…';
-
-  const { ok, data } = await apiFetch('/auth/forgot-password', {
-    method: 'POST',
-    body: JSON.stringify({ email }),
-  });
-
-  btn.disabled = false; btn.textContent = 'Send OTP';
-
-  if (!ok) { showToast(data.message || 'Error'); return; }
-
-  if (data.sent) {
-    // Send OTP via EmailJS
-    await sendOTPEmail(data.email, data.name, data.otp);
-    showForgotOTPScreen(email);
+async function resendVerificationOTP(email, name) {
+  const otp = generateOTP();
+  OTP_STORE[email] = { code: otp, expiry: Date.now() + 10 * 60 * 1000, purpose: 'verify' };
+  const sent = await sendOTPEmail(email, name, otp, 'verify');
+  if (sent) {
+    showToast('OTP sent to ' + email);
+    showOTPVerifyScreen(email, 'verify');
   } else {
-    // Email not found — show generic message (no enumeration)
-    showToast('If that email exists, an OTP has been sent.');
+    showToast('Failed to send OTP. Check EmailJS config.');
   }
 }
 
-// ── Forgot password — Step 2: enter OTP screen ───────────────────────────────
-function showForgotOTPScreen(email) {
-  document.getElementById('auth-forgot').innerHTML = `
-    <div style="text-align:center;margin-bottom:16px">
-      <div style="font-size:32px;margin-bottom:8px">🔐</div>
-      <div style="font-size:14px;font-weight:600;color:var(--cream)">Enter OTP</div>
-      <div style="font-size:12px;color:var(--cream-m);margin-top:4px">
-        Sent to <strong style="color:var(--amber)">${email}</strong> · valid 10 min
-      </div>
-    </div>
-    <div class="form-group">
-      <label>6-digit OTP</label>
-      <input type="text" id="reset-otp" placeholder="000000" maxlength="6"
-        style="text-align:center;font-size:24px;letter-spacing:8px;font-weight:700"
-        oninput="this.value=this.value.replace(/[^0-9]/g,'')" />
-    </div>
-    <div class="form-group">
-      <label>New Password</label>
-      <input type="password" id="reset-pass" placeholder="Min 6 characters" />
-    </div>
-    <div class="form-group">
-      <label>Confirm Password</label>
-      <input type="password" id="reset-pass2" placeholder="Repeat password" />
-    </div>
-    <button class="btn-primary" onclick="doResetPassword('${email}')">Reset Password</button>
-    <div style="margin-top:12px;font-size:12px;color:var(--cream-m);text-align:center">
-      Didn't get it? <a onclick="doResendForgotOTP('${email}')" style="color:var(--amber);cursor:pointer">Resend OTP</a>
-      &nbsp;·&nbsp; <a onclick="switchAuthTab('forgot')" style="color:var(--amber);cursor:pointer">Change email</a>
-    </div>`;
-}
-
-// ── Forgot password — Step 3: submit new password ────────────────────────────
-async function doResetPassword(email) {
-  const otp   = document.getElementById('reset-otp')?.value.trim();
-  const pass  = document.getElementById('reset-pass')?.value;
-  const pass2 = document.getElementById('reset-pass2')?.value;
-
-  if (!otp || otp.length !== 6) { showToast('Enter the 6-digit OTP'); return; }
-  if (!pass || pass.length < 6) { showToast('Password must be at least 6 characters'); return; }
-  if (pass !== pass2)            { showToast('Passwords do not match'); return; }
-
-  const btn = document.querySelector('#auth-forgot .btn-primary');
-  btn.disabled = true; btn.textContent = 'Resetting…';
-
-  const { ok, data } = await apiFetch('/auth/reset-password', {
-    method: 'POST',
-    body: JSON.stringify({ email, otp, password: pass }),
-  });
-
-  btn.disabled = false; btn.textContent = 'Reset Password';
-
-  if (!ok) { showToast(data.message || 'Failed'); return; }
-
-  // Success — show confirmation and redirect to login
-  document.getElementById('auth-forgot').innerHTML = `
-    <div style="text-align:center;padding:20px 0">
-      <div style="font-size:40px;margin-bottom:12px">✅</div>
-      <div style="font-size:15px;font-weight:600;color:var(--cream);margin-bottom:8px">Password Reset!</div>
-      <div style="font-size:13px;color:var(--cream-m);margin-bottom:20px">You can now log in with your new password.</div>
-      <button class="btn-primary" onclick="switchAuthTab('login')">Go to Login →</button>
-    </div>`;
-}
-
-// ── Resend forgot password OTP ────────────────────────────────────────────────
-async function doResendForgotOTP(email) {
-  const { ok, data } = await apiFetch('/auth/forgot-password', {
-    method: 'POST',
-    body: JSON.stringify({ email }),
-  });
-  if (ok && data.sent) {
-    await sendOTPEmail(data.email, data.name, data.otp);
-    showToast('New OTP sent to ' + email);
-  } else {
-    showToast('Could not resend OTP');
-  }
-}
-
-// ── EmailJS config — replace with your actual IDs ────────────────────────────
-const EMAILJS_SERVICE_ID  = 'service_lu28vxe';
-const EMAILJS_TEMPLATE_ID = 'template_63tdbx5';
-const EMAILJS_PUBLIC_KEY  = 'dkLVASmAKFMrmX8pR';
-
-// Init EmailJS
-if (typeof emailjs !== 'undefined') emailjs.init(EMAILJS_PUBLIC_KEY);
-
-// ── Signup — Step 1: create account & send OTP via EmailJS ───────────────────
+// ── Signup ────────────────────────────────────────────────────────────────────
 async function doSignup() {
   const name  = document.getElementById('s-name').value.trim();
   const email = document.getElementById('s-email').value.trim();
@@ -285,155 +203,180 @@ async function doSignup() {
   if (!name || !email || !pass) { showToast('All fields required'); return; }
   if (pass.length < 6) { showToast('Password must be at least 6 characters'); return; }
 
+  const existing = findUser(email);
+  if (existing) { showToast('Email already registered. Please log in.'); return; }
+
   const btn = document.querySelector('#auth-signup .btn-primary');
-  btn.disabled = true; btn.textContent = 'Creating account…';
+  btn.disabled = true; btn.textContent = 'Sending OTP…';
 
-  const { ok, data } = await apiFetch('/auth/signup', {
-    method: 'POST',
-    body: JSON.stringify({ name, email, password: pass }),
-  });
+  const otp = generateOTP();
+  OTP_STORE[email] = { code: otp, expiry: Date.now() + 10 * 60 * 1000, purpose: 'verify', pendingUser: { name, email, password: pass } };
 
+  const sent = await sendOTPEmail(email, name, otp, 'verify');
   btn.disabled = false; btn.textContent = 'Create Account';
 
-  if (!ok) { showToast(data.message || 'Signup failed'); return; }
+  if (!sent) { showToast('Failed to send OTP. Check EmailJS config.'); return; }
 
-  // Send OTP via EmailJS from the browser
-  await sendOTPEmail(data.email, data.name, data.otp);
-
-  // Show OTP input screen
-  showOTPScreen(email, name);
+  showToast('OTP sent to ' + email);
+  showOTPVerifyScreen(email, 'verify');
 }
 
-// ── Send OTP email via EmailJS ────────────────────────────────────────────────
-async function sendOTPEmail(email, name, otp) {
-  try {
-    const result = await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
-      to_email: email,
-      to_name:  name,
-      otp:      otp,
-    }, EMAILJS_PUBLIC_KEY);
-    console.log('EmailJS success:', result);
-  } catch (err) {
-    console.error('EmailJS full error:', JSON.stringify(err));
-    console.error('EmailJS status:', err?.status, 'text:', err?.text);
-    showToast('Email error ' + (err?.status || '') + ': ' + (err?.text || JSON.stringify(err)));
+// ── OTP Verification Screen ───────────────────────────────────────────────────
+function showOTPVerifyScreen(email, purpose) {
+  const containerId = purpose === 'verify'
+    ? (document.getElementById('auth-signup').classList.contains('hidden') ? 'auth-login' : 'auth-signup')
+    : 'auth-forgot';
+
+  const el = document.getElementById(containerId);
+  el.innerHTML = `
+    <div style="text-align:center;margin-bottom:16px">
+      <div style="font-size:36px;margin-bottom:8px">🔐</div>
+      <div style="font-size:14px;font-weight:600;color:var(--cream)">Enter the 6-digit OTP</div>
+      <div style="font-size:12px;color:var(--cream-m);margin-top:4px">Sent to <strong style="color:var(--amber)">${email}</strong></div>
+    </div>
+    <div class="form-group" style="text-align:center">
+      <input type="text" id="otp-input" maxlength="6" placeholder="_ _ _ _ _ _"
+        style="letter-spacing:8px;font-size:22px;font-weight:700;text-align:center;width:100%;padding:14px 0"
+        oninput="this.value=this.value.replace(/[^0-9]/g,'')" />
+    </div>
+    <button class="btn-primary" onclick="verifyOTP('${email}','${purpose}')">Verify OTP</button>
+    <div class="auth-footer" style="text-align:center;margin-top:10px">
+      Didn't receive it? <a onclick="resendOTP('${email}','${purpose}')" style="cursor:pointer;color:var(--amber)">Resend OTP</a>
+      &nbsp;·&nbsp; <a onclick="switchAuthTab('${purpose === 'verify' ? 'login' : 'login'}')" style="cursor:pointer">Cancel</a>
+    </div>`;
+  // store context
+  el.dataset.otpEmail   = email;
+  el.dataset.otpPurpose = purpose;
+}
+
+async function verifyOTP(email, purpose) {
+  const input = document.getElementById('otp-input')?.value.trim();
+  if (!input || input.length < 6) { showToast('Enter the 6-digit OTP'); return; }
+
+  const record = OTP_STORE[email];
+  if (!record) { showToast('OTP expired or not found. Request a new one.'); return; }
+  if (Date.now() > record.expiry) { delete OTP_STORE[email]; showToast('OTP expired. Request a new one.'); return; }
+  if (record.code !== input) { showToast('Incorrect OTP. Try again.'); return; }
+
+  delete OTP_STORE[email];
+
+  if (purpose === 'verify') {
+    // Complete signup or mark existing user as verified
+    const users = getUsers();
+    if (record.pendingUser) {
+      // Brand new signup
+      const newUser = {
+        id: Date.now(),
+        name: record.pendingUser.name,
+        email: record.pendingUser.email,
+        password: record.pendingUser.password,
+        role: 'employee',
+        status: 'active',
+        verified: true,
+      };
+      users.push(newUser);
+      saveUsers(users);
+      showToast('Account verified! You can now log in.');
+    } else {
+      // Existing unverified user
+      const u = users.find(x => x.email.toLowerCase() === email.toLowerCase());
+      if (u) { u.verified = true; saveUsers(users); }
+      showToast('Email verified! Logging you in…');
+      // Auto-login
+      S.currentUser = u || findUser(email);
+      if (S.currentUser) {
+        localStorage.setItem('cafe_session', JSON.stringify(S.currentUser));
+        showView('session');
+        return;
+      }
+    }
+    switchAuthTab('login');
+
+  } else if (purpose === 'reset') {
+    // Show new-password form
+    const forgot = document.getElementById('auth-forgot');
+    forgot.innerHTML = `
+      <div style="text-align:center;margin-bottom:16px">
+        <div style="font-size:14px;font-weight:600;color:var(--cream)">Set New Password</div>
+        <div style="font-size:12px;color:var(--cream-m);margin-top:4px">${email}</div>
+      </div>
+      <div class="form-group"><label>New Password</label><input type="password" id="rp-pass" placeholder="At least 6 characters"/></div>
+      <div class="form-group"><label>Confirm Password</label><input type="password" id="rp-pass2" placeholder="Repeat password"/></div>
+      <button class="btn-primary" onclick="doResetPassword('${email}')">Set Password</button>
+      <div class="auth-footer"><a onclick="switchAuthTab('login')" style="cursor:pointer">← Back to Login</a></div>`;
   }
 }
 
-// ── Show OTP verification screen ──────────────────────────────────────────────
-function showOTPScreen(email, name) {
-  document.getElementById('auth-signup').innerHTML = `
-    <div style="text-align:center;padding:10px 0">
-      <div style="font-size:36px;margin-bottom:10px">📧</div>
-      <div style="font-size:15px;font-weight:600;color:var(--cream);margin-bottom:6px">Check your inbox!</div>
-      <div style="font-size:12px;color:var(--cream-m);margin-bottom:20px">
-        We sent a 6-digit OTP to<br><strong style="color:var(--amber)">${email}</strong><br>
-        <span style="font-size:11px">Valid for 10 minutes</span>
-      </div>
-      <div class="form-group">
-        <label>Enter OTP</label>
-        <input type="text" id="otp-input" placeholder="000000" maxlength="6"
-          style="text-align:center;font-size:24px;letter-spacing:8px;font-weight:700"
-          oninput="this.value=this.value.replace(/[^0-9]/g,'')" />
-      </div>
-      <button class="btn-primary" onclick="doVerifyOTP('${email}')">Verify OTP</button>
-      <div style="margin-top:12px;font-size:12px;color:var(--cream-m)">
-        Didn't get it? <a onclick="doResendOTP('${email}','${name}')" style="color:var(--amber);cursor:pointer">Resend OTP</a>
-      </div>
-    </div>`;
+function doResetPassword(email) {
+  const p1 = document.getElementById('rp-pass')?.value;
+  const p2 = document.getElementById('rp-pass2')?.value;
+  if (!p1 || p1.length < 6) { showToast('Password must be at least 6 characters'); return; }
+  if (p1 !== p2) { showToast('Passwords do not match'); return; }
+
+  const users = getUsers();
+  const u = users.find(x => x.email.toLowerCase() === email.toLowerCase());
+  if (!u) { showToast('User not found'); return; }
+  u.password = p1;
+  saveUsers(users);
+  showToast('Password updated! Please log in.');
+  switchAuthTab('login');
 }
 
-// ── Verify OTP ────────────────────────────────────────────────────────────────
-async function doVerifyOTP(email) {
-  const otp = document.getElementById('otp-input')?.value.trim();
-  if (!otp || otp.length !== 6) { showToast('Enter the 6-digit OTP'); return; }
-
-  const btn = document.querySelector('#auth-signup .btn-primary');
-  btn.disabled = true; btn.textContent = 'Verifying…';
-
-  const { ok, data } = await apiFetch('/auth/verify-otp', {
-    method: 'POST',
-    body: JSON.stringify({ email, otp }),
-  });
-
-  btn.disabled = false; btn.textContent = 'Verify OTP';
-
-  if (!ok) { showToast(data.message || 'Invalid OTP'); return; }
-
-  // Auto-login after verification
-  localStorage.setItem('cafe_token', data.token);
-  S.currentUser = data.user;
-  await loadAppData();
-  showView('session');
-  showToast('Welcome, ' + data.user.name + '! 🎉');
+async function resendOTP(email, purpose) {
+  const record = OTP_STORE[email];
+  const user   = findUser(email);
+  const name   = record?.pendingUser?.name || user?.name || email.split('@')[0];
+  const otp    = generateOTP();
+  OTP_STORE[email] = { ...record, code: otp, expiry: Date.now() + 10 * 60 * 1000 };
+  const sent = await sendOTPEmail(email, name, otp, purpose);
+  showToast(sent ? 'OTP resent to ' + email : 'Failed to resend OTP.');
 }
 
-// ── Resend OTP ────────────────────────────────────────────────────────────────
-async function doResendOTP(email, name) {
-  const { ok, data } = await apiFetch('/auth/resend-otp', {
-    method: 'POST',
-    body: JSON.stringify({ email }),
-  });
-  if (!ok) { showToast(data.message || 'Error'); return; }
-  await sendOTPEmail(data.email, data.name, data.otp);
-  showToast('New OTP sent to ' + email);
+// ── Forgot Password ───────────────────────────────────────────────────────────
+async function doForgotPassword() {
+  const email = document.getElementById('f-email').value.trim();
+  if (!email) { showToast('Enter your email'); return; }
+
+  const user = findUser(email);
+  if (!user) { showToast('No account found with this email'); return; }
+
+  const btn = document.querySelector('#auth-forgot .btn-primary');
+  btn.disabled = true; btn.textContent = 'Sending OTP…';
+
+  const otp = generateOTP();
+  OTP_STORE[email] = { code: otp, expiry: Date.now() + 10 * 60 * 1000, purpose: 'reset' };
+
+  const sent = await sendOTPEmail(email, user.name, otp, 'reset');
+  btn.disabled = false; btn.textContent = 'Send OTP';
+
+  if (!sent) { showToast('Failed to send OTP. Check EmailJS config.'); return; }
+
+  showToast('OTP sent to ' + email);
+  showOTPVerifyScreen(email, 'reset');
 }
 
 // ── Logout ────────────────────────────────────────────────────────────────────
 function doLogout() {
-  localStorage.removeItem('cafe_token');
+  localStorage.removeItem('cafe_session');
   S.currentUser = null; S.cart = []; S.currentTable = null;
   showView('auth');
 }
 
 // ── Auto-restore session on page load ────────────────────────────────────────
 async function tryRestoreSession() {
-  const token = localStorage.getItem('cafe_token');
-  if (!token) return;
-  const { ok, data } = await apiFetch('/auth/me');
-  if (ok) {
-    S.currentUser = data;
-    await loadAppData();
-    showView('session');
-  } else {
-    localStorage.removeItem('cafe_token');
-  }
-}
-
-// ── Load all app data from MongoDB after login ────────────────────────────────
-async function loadAppData() {
-  // Seed default data on first run
-  await apiFetch('/data/seed', { method: 'POST' });
-
-  const { ok, data } = await apiFetch('/data/bootstrap');
-  if (!ok) return;
-
-  // Map DB products/categories to the shape S expects
-  S.categories = data.categories.map(c => ({
-    id: c._id, _id: c._id, name: c.name, color: c.color
-  }));
-
-  S.products = data.products.map(p => ({
-    id: p._id, _id: p._id,
-    name: p.name,
-    category: p.category?._id || p.category,
-    categoryName: p.category?.name || '',
-    price: p.price, tax: p.tax, uom: p.uom, desc: p.desc, emoji: p.emoji
-  }));
-
-  S.orders = data.orders.map(o => ({
-    id: o._id, _id: o._id,
-    num: o.num, tableId: o.tableId, tableNum: o.tableNum,
-    customer: o.customer, customerId: o.customerId,
-    items: o.items, sub: o.sub, tax: o.tax,
-    disc: o.disc, discLabel: o.discLabel,
-    total: o.total, payMethod: o.payMethod,
-    status: o.status, date: o.date,
-  }));
-
-  // Determine next order number
-  const maxNum = S.orders.reduce((m, o) => Math.max(m, o.num || 0), 0);
-  S.orderNum = maxNum + 1;
+  try {
+    const raw = localStorage.getItem('cafe_session');
+    if (!raw) return;
+    const user = JSON.parse(raw);
+    if (user && user.id) {
+      S.currentUser = user;
+      if (user.role === 'admin' && !window.location.pathname.includes('admin.html')) {
+        window.location.href = 'admin.html';
+      } else if (user.role !== 'admin') {
+        showView('session');
+      }
+    }
+  } catch { localStorage.removeItem('cafe_session'); }
 }
 
 function renderSession() {
@@ -657,33 +600,18 @@ function changePassword(id) { const u = S.users.find(x => x.id === id); if (!u) 
 // Form panel
 function openFormPanel() { document.getElementById('form-panel').classList.add('open') }
 function closeFormPanel() { document.getElementById('form-panel').classList.remove('open') }
-async function saveForm() {
+function saveForm() {
   const type = S.editingFormType, id = S.editingId;
-
   if (type === 'product') {
-    const d = { name: v('fp-name'), category: v('fp-cat'), price: parseFloat(v('fp-price')) || 0, tax: parseInt(v('fp-tax')), uom: v('fp-uom'), desc: v('fp-desc'), emoji: v('fp-emoji') || '🍽' };
+    const d = { name: v('fp-name'), category: parseInt(v('fp-cat')), price: parseFloat(v('fp-price')) || 0, tax: parseInt(v('fp-tax')), uom: v('fp-uom'), desc: v('fp-desc'), emoji: v('fp-emoji') || '🍽' };
     if (!d.name || !d.price) { showToast('Name and price required'); return; }
-    const { ok, data } = await apiFetch('/data/products' + (id ? '/'+id : ''), {
-      method: id ? 'PUT' : 'POST', body: JSON.stringify(d)
-    });
-    if (!ok) { showToast(data.message || 'Save failed'); return; }
-    const mapped = { id: data._id, _id: data._id, name: data.name, category: data.category?._id || data.category, price: data.price, tax: data.tax, uom: data.uom, desc: data.desc, emoji: data.emoji };
-    if (id) { const i = S.products.findIndex(x => x.id === id); if (i >= 0) S.products[i] = mapped; }
-    else S.products.push(mapped);
+    if (id) { Object.assign(S.products.find(x => x.id === id), d); } else { S.products.push({ id: Date.now(), ...d }); }
     renderProductsTable();
-
   } else if (type === 'category') {
     const d = { name: v('fp-name'), color: v('fp-color') || '#E8A020' };
     if (!d.name) { showToast('Name required'); return; }
-    const { ok, data } = await apiFetch('/data/categories' + (id ? '/'+id : ''), {
-      method: id ? 'PUT' : 'POST', body: JSON.stringify(d)
-    });
-    if (!ok) { showToast(data.message || 'Save failed'); return; }
-    const mapped = { id: data._id, _id: data._id, name: data.name, color: data.color };
-    if (id) { const i = S.categories.findIndex(x => x.id === id); if (i >= 0) S.categories[i] = mapped; }
-    else S.categories.push(mapped);
+    if (id) { Object.assign(S.categories.find(x => x.id === id), d); } else { S.categories.push({ id: Date.now(), ...d }); }
     renderCategoriesTable();
-
   } else if (type === 'promo') {
     const type2 = v('fp-type');
     const d = {
@@ -694,12 +622,10 @@ async function saveForm() {
     if (!d.name) { showToast('Name required'); return; }
     if (id) { Object.assign(S.promotions.find(x => x.id === id), d); } else { S.promotions.push({ id: Date.now(), ...d }); }
     renderPromosTable();
-
   } else if (type === 'floor') {
     const d = { num: parseInt(v('fp-num')) || 1, floor: v('fp-floor') || 'Main Floor', seats: parseInt(v('fp-seats')) || 2, active: document.getElementById('fp-active').checked };
     if (id) { Object.assign(S.floors.find(x => x.id === id), d); } else { S.floors.push({ id: Date.now(), ...d }); }
     renderFloorsTable();
-
   } else if (type === 'user') {
     const d = { name: v('fp-name'), email: v('fp-email'), role: v('fp-role'), status: v('fp-status') };
     if (!d.name || !d.email) { showToast('Name and email required'); return; }
@@ -707,20 +633,11 @@ async function saveForm() {
     else { if (!v('fp-pass')) { showToast('Password required'); return; } S.users.push({ id: Date.now(), ...d, password: v('fp-pass') }); }
     renderUsersTable();
   }
-
   closeFormPanel(); showToast('Saved!');
 }
-async function deleteItem(col, id) {
+function deleteItem(col, id) {
   if (!confirm('Delete this record?')) return;
-  if (col === 'products') {
-    await apiFetch('/data/products/' + id, { method: 'DELETE' });
-    S.products = S.products.filter(x => x.id !== id);
-  } else if (col === 'categories') {
-    await apiFetch('/data/categories/' + id, { method: 'DELETE' });
-    S.categories = S.categories.filter(x => x.id !== id);
-  } else {
-    S[col] = S[col].filter(x => x.id !== id);
-  }
+  S[col] = S[col].filter(x => x.id !== id);
   renderBackend(); showToast('Deleted');
 }
 function v(id) { const el = document.getElementById(id); return el ? el.value : '' }
@@ -1051,25 +968,14 @@ function calcChange() {
   document.getElementById('change-due').textContent = '₹' + change;
 }
 
-async function confirmPayment() {
+function confirmPayment() {
   const { sub, tax, disc, discLabel, total } = calcTotals();
-  const orderData = {
-    tableId: S.currentTable?.id, tableNum: S.currentTable?.num,
-    customer: S.currentCustomer?.name || 'Guest',
-    customerId: S.currentCustomer?.id,
-    items: [...S.cart], sub, tax, disc, discLabel, total,
-    payMethod: S.payMethod, status: 'paid', date: new Date().toISOString()
+  const order = {
+    id: Date.now(), num: S.orderNum++, tableId: S.currentTable?.id, customer: S.currentCustomer?.name || 'Guest',
+    customerId: S.currentCustomer?.id, items: [...S.cart], sub, tax, disc, discLabel, total,
+    payMethod: S.payMethod, coupon: S.coupon, status: 'paid', date: new Date().toISOString()
   };
-
-  const { ok, data } = await apiFetch('/data/orders', {
-    method: 'POST',
-    body: JSON.stringify(orderData),
-  });
-
-  const order = ok ? { ...data, id: data._id, num: data.num } : { ...orderData, id: Date.now(), num: S.orderNum++ };
-  if (ok) S.orderNum = order.num + 1;
-  S.orders.unshift(order);
-
+  S.orders.push(order);
   closeOverlay('ov-payment');
   document.getElementById('success-sub').textContent = `₹${total} via ${S.payMethod} · Order #${String(order.num).padStart(5, '0')}`;
   openOverlay('ov-success');
