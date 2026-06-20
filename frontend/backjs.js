@@ -966,36 +966,63 @@ function openPaymentModal() {
     `<div class="m-row"><span>Tax (5%)</span><span>₹${tax}</span></div>` +
     (disc ? `<div class="m-row"><span>${discLabel}</span><span style="color:var(--green)">-₹${disc}</span></div>` : '');
 
-  document.getElementById('cash-change-wrap').classList.toggle('hidden', pm.type !== 'cash');
-  document.getElementById('upi-wrap').classList.toggle('hidden', pm.type !== 'upi');
-  document.getElementById('card-wrap').classList.toggle('hidden', pm.type !== 'card');
-  if (pm.type === 'upi') {
-    const upiId = pm.upiId || 'sripranav08@okaxis';
-    const upiLink = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent('Odoo Cafe')}&am=${total}&cu=INR&tn=${encodeURIComponent('Order #' + String(S.orderNum).padStart(5,'0'))}`;
-    // Inject full QR UI into upi-wrap (works whether or not static HTML exists)
-    const wrap = document.getElementById('upi-wrap');
-    if (wrap) {
-      wrap.innerHTML = `
-        <div style="text-align:center;padding:4px 0 12px">
-          <div style="display:inline-block;background:#fff;border-radius:16px;padding:16px;box-shadow:0 4px 24px rgba(0,0,0,.35);margin-bottom:14px;position:relative">
-            <div id="upi-qr-canvas"></div>
-            <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:6px;padding:3px 5px;font-size:11px;font-weight:700;color:#111;pointer-events:none">☕</div>
-          </div>
-          <div style="font-size:11px;color:var(--cream-m);margin-bottom:4px">Scan with any UPI app</div>
-          <div style="font-size:13px;font-weight:600;color:var(--amber);margin-bottom:6px">${upiId}</div>
-          <div style="font-size:20px;font-weight:800;color:var(--cream)">₹${total}</div>
-          <div style="margin-top:14px">
-            <a href="${upiLink}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;padding:7px 14px;font-size:12px;color:#fff;text-decoration:none;font-weight:600">📱 Open UPI App</a>
-          </div>
-          <div style="margin-top:12px;font-size:12px;color:var(--cream-m)">After paying, click <strong style="color:#fff">Confirm Payment</strong> below</div>
-        </div>`;
-      new QRCode(document.getElementById('upi-qr-canvas'), {
-        text: upiLink, width: 200, height: 200,
-        colorDark: '#111111', colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.M,
-      });
-    }
+  // Safely toggle payment sections — create upi-wrap if missing
+  const modalEl = document.querySelector('#ov-payment .modal');
+  let cashWrap = document.getElementById('cash-change-wrap');
+  let upiWrap  = document.getElementById('upi-wrap');
+  let cardWrap = document.getElementById('card-wrap');
+
+  // Create missing wrappers dynamically before modal-actions
+  const actionsEl = document.querySelector('#ov-payment .modal-actions');
+  if (!upiWrap && modalEl) {
+    upiWrap = document.createElement('div');
+    upiWrap.id = 'upi-wrap';
+    modalEl.insertBefore(upiWrap, actionsEl);
   }
+  if (!cashWrap && modalEl) {
+    cashWrap = document.createElement('div');
+    cashWrap.id = 'cash-change-wrap';
+    modalEl.insertBefore(cashWrap, actionsEl);
+  }
+  if (!cardWrap && modalEl) {
+    cardWrap = document.createElement('div');
+    cardWrap.id = 'card-wrap';
+    modalEl.insertBefore(cardWrap, actionsEl);
+  }
+
+  if (cashWrap) cashWrap.classList.toggle('hidden', pm.type !== 'cash');
+  if (upiWrap)  upiWrap.classList.toggle('hidden', pm.type !== 'upi');
+  if (cardWrap) cardWrap.classList.toggle('hidden', pm.type !== 'card');
+
+  if (pm.type === 'upi' && upiWrap) {
+    const upiId  = pm.upiId || 'sripranav08@okaxis';
+    const upiLink = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent('Odoo Cafe')}&am=${total}&cu=INR&tn=${encodeURIComponent('Order #' + String(S.orderNum).padStart(5,'0'))}`;
+    upiWrap.innerHTML = `
+      <div style="text-align:center;padding:4px 0 16px">
+        <div style="display:inline-block;background:#fff;border-radius:16px;padding:16px;box-shadow:0 4px 24px rgba(0,0,0,.4);margin-bottom:14px;position:relative">
+          <div id="upi-qr-canvas"></div>
+          <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:6px;padding:3px 5px;font-size:13px;pointer-events:none">☕</div>
+        </div>
+        <div style="font-size:11px;color:var(--cream-m);margin-bottom:4px">Scan with any UPI app</div>
+        <div style="font-size:13px;font-weight:600;color:var(--amber);margin-bottom:6px">${upiId}</div>
+        <div style="font-size:22px;font-weight:800;color:var(--cream);margin-bottom:12px">₹${total}</div>
+        <a href="${upiLink}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:8px 16px;font-size:13px;color:#fff;text-decoration:none;font-weight:600">📱 Open UPI App</a>
+        <div style="margin-top:12px;font-size:12px;color:var(--cream-m)">After paying, click <strong style="color:#fff">Confirm Payment</strong></div>
+      </div>`;
+    new QRCode(document.getElementById('upi-qr-canvas'), {
+      text: upiLink, width: 200, height: 200,
+      colorDark: '#111111', colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M,
+    });
+  } else if (pm.type === 'cash' && cashWrap) {
+    cashWrap.innerHTML = `
+      <div class="fp-group"><label>Amount Received (₹)</label><input type="number" id="cash-received" placeholder="0" oninput="calcChange()"/></div>
+      <div style="font-size:13px;color:var(--green);margin-bottom:8px">Change due: <strong id="change-due">₹0</strong></div>`;
+  } else if (pm.type === 'card' && cardWrap) {
+    cardWrap.innerHTML = `
+      <div class="fp-group"><label>Transaction Reference</label><input type="text" id="card-ref" placeholder="REF123456"/></div>`;
+  }
+
   openOverlay('ov-payment');
 }
 
