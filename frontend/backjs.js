@@ -188,7 +188,7 @@ async function doForgotPassword() {
 
 // ── EmailJS config — replace with your actual IDs ────────────────────────────
 const EMAILJS_SERVICE_ID  = 'service_lu28vxe';
-const EMAILJS_TEMPLATE_ID = 'template_1lobm3b';
+const EMAILJS_TEMPLATE_ID = 'template_63tdbx5';
 const EMAILJS_PUBLIC_KEY  = 'dkLVASmAKFMrmX8pR';
 
 // Init EmailJS
