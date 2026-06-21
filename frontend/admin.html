@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Odoo Cafe — Admin</title>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <script src="app.js" defer></script>
   <style>
     :root {
       --bg:       #0f0e0d;
@@ -514,11 +515,22 @@ const DEFAULT = {
 };
 
 // ── Data helpers ──────────────────────────────────────────
+// Products & Categories now come from the REAL backend (S.products / S.categories,
+// populated by app.js's loadBootstrap() via MongoDB). Everything else
+// (users, floors, promotions, paymentMethods) is NOT yet on the backend,
+// so it still uses localStorage as a placeholder until those routes exist.
 function getData(key) {
+  if (key === 'products')   return S.products;
+  if (key === 'categories') return S.categories;
   try { return JSON.parse(localStorage.getItem('cafe_' + key) || 'null') || DEFAULT[key]; }
   catch { return DEFAULT[key]; }
 }
-function saveData(key, val) { localStorage.setItem('cafe_' + key, JSON.stringify(val)); }
+function saveData(key, val) {
+  // products/categories are saved via API calls directly (see savePanel),
+  // never via this localStorage path — guard against accidental misuse.
+  if (key === 'products' || key === 'categories') return;
+  localStorage.setItem('cafe_' + key, JSON.stringify(val));
+}
 function getAll() {
   return {
     users:          getData('users'),
@@ -527,7 +539,7 @@ function getAll() {
     paymentMethods: getData('paymentMethods'),
     promotions:     getData('promotions'),
     floors:         getData('floors'),
-    orders:         getData('orders'),
+    orders:         S.orders || [],
     customers:      getData('customers'),
   };
 }
@@ -538,21 +550,19 @@ let panelType = null, panelId = null;
 // ── Auth guard ────────────────────────────────────────────
 let currentAdmin = null;
 function checkAuth() {
-  try {
-    const raw = localStorage.getItem('cafe_session');
-    if (!raw) { window.location.href = 'homepage.html'; return false; }
-    const u = JSON.parse(raw);
-    if (!u || u.role !== 'admin') { window.location.href = 'homepage.html'; return false; }
-    currentAdmin = u;
-    document.getElementById('admin-name-display').textContent = u.name;
-    document.getElementById('admin-avatar').textContent = (u.name[0] || 'A').toUpperCase();
-    document.getElementById('guard').classList.remove('show');
-    return true;
-  } catch { window.location.href = 'homepage.html'; return false; }
+  const u = (typeof Auth !== 'undefined') ? Auth.getUser() : null;
+  const token = (typeof getToken === 'function') ? getToken() : null;
+  if (!u || !token) { window.location.href = 'homepage.html'; return false; }
+  if (u.role !== 'admin') { window.location.href = 'homepage.html'; return false; }
+  currentAdmin = u;
+  document.getElementById('admin-name-display').textContent = u.name;
+  document.getElementById('admin-avatar').textContent = (u.name[0] || 'A').toUpperCase();
+  document.getElementById('guard').classList.remove('show');
+  return true;
 }
 
 function doAdminLogout() {
-  localStorage.removeItem('cafe_session');
+  if (typeof Auth !== 'undefined') Auth.logout();
   window.location.href = 'homepage.html';
 }
 
@@ -936,7 +946,7 @@ function closePanel() {
 }
 function fv(id) { const el = document.getElementById(id); return el ? el.value : ''; }
 
-function savePanel() {
+async function savePanel() {
   const type = panelType, id = panelId;
 
   if (type === 'user') {
@@ -951,26 +961,52 @@ function savePanel() {
       users.push({ id: Date.now(), ...d, password: pass });
     }
     saveData('users', users); renderUsers();
+    closePanel();
+    showToast('Saved successfully!');
 
   } else if (type === 'product') {
-    const products = getData('products');
-    const d = { name: fv('fp-name'), category: parseInt(fv('fp-cat')), price: parseFloat(fv('fp-price'))||0, tax: parseInt(fv('fp-tax')), uom: fv('fp-uom'), desc: fv('fp-desc'), emoji: fv('fp-emoji')||'🍽' };
+    const d = {
+      name: fv('fp-name'),
+      category: fv('fp-cat'),
+      price: parseFloat(fv('fp-price')) || 0,
+      tax: parseInt(fv('fp-tax')),
+      uom: fv('fp-uom'),
+      desc: fv('fp-desc'),
+      emoji: fv('fp-emoji') || '🍽',
+    };
     if (!d.name || !d.price) { showToast('Name and price required'); return; }
-    if (id) { Object.assign(products.find(x => x.id === id), d); } else { products.push({ id: Date.now(), ...d }); }
-    saveData('products', products); renderProducts();
+    try {
+      if (id) await updateProductRemote(id, d);
+      else await createProduct(d);
+      renderProducts();
+      closePanel();
+      showToast('Saved successfully!');
+    } catch (err) {
+      showToast(err.message || 'Failed to save product');
+    }
+    return;
 
   } else if (type === 'category') {
-    const categories = getData('categories');
-    const d = { name: fv('fp-name'), color: fv('fp-color')||'#E8A020' };
+    const d = { name: fv('fp-name'), color: fv('fp-color') || '#E8A020' };
     if (!d.name) { showToast('Name required'); return; }
-    if (id) { Object.assign(categories.find(x => x.id === id), d); } else { categories.push({ id: Date.now(), ...d }); }
-    saveData('categories', categories); renderCategories();
+    try {
+      if (id) await updateCategoryRemote(id, d);
+      else await createCategory(d);
+      renderCategories();
+      closePanel();
+      showToast('Saved successfully!');
+    } catch (err) {
+      showToast(err.message || 'Failed to save category');
+    }
+    return;
 
   } else if (type === 'floor') {
     const floors = getData('floors');
     const d = { num: parseInt(fv('fp-num'))||1, floor: fv('fp-floor')||'Main Floor', seats: parseInt(fv('fp-seats'))||2, active: document.getElementById('fp-active').checked };
     if (id) { Object.assign(floors.find(x => x.id === id), d); } else { floors.push({ id: Date.now(), ...d }); }
     saveData('floors', floors); renderFloors();
+    closePanel();
+    showToast('Saved successfully!');
 
   } else if (type === 'promo') {
     const promotions = getData('promotions');
@@ -979,14 +1015,23 @@ function savePanel() {
     if (!d.name) { showToast('Name required'); return; }
     if (id) { Object.assign(promotions.find(x => x.id === id), d); } else { promotions.push({ id: Date.now(), ...d }); }
     saveData('promotions', promotions); renderPromotions();
+    closePanel();
+    showToast('Saved successfully!');
   }
-
-  closePanel();
-  showToast('Saved successfully!');
 }
 
-function deleteRecord(key, id) {
+async function deleteRecord(key, id) {
   if (!confirm('Delete this record? This cannot be undone.')) return;
+  if (key === 'products') {
+    try { await deleteProductRemote(id); renderProducts(); showToast('Deleted'); }
+    catch (err) { showToast(err.message || 'Failed to delete'); }
+    return;
+  }
+  if (key === 'categories') {
+    try { await deleteCategoryRemote(id); renderCategories(); showToast('Deleted'); }
+    catch (err) { showToast(err.message || 'Failed to delete'); }
+    return;
+  }
   const data = getData(key);
   saveData(key, data.filter(x => x.id !== id));
   renderSection(document.querySelector('.section.active')?.id?.replace('sec-', '') || '');
@@ -994,8 +1039,13 @@ function deleteRecord(key, id) {
 }
 
 // ── INIT ─────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   if (!checkAuth()) return;
+  // app.js's own DOMContentLoaded → tryRestoreSession() → loadBootstrap() may still
+  // be in flight; make sure S.products/S.categories are populated before first render.
+  if (typeof loadBootstrap === 'function') {
+    try { await loadBootstrap(); } catch {}
+  }
   renderDashboard();
   // Load saved settings
   try {
