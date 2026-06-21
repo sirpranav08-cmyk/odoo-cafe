@@ -11,6 +11,8 @@
   <link href="backcss.css" rel="stylesheet">
   <!-- EmailJS SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+  <!-- QRCode.js (used to render the UPI payment QR code) -->
+  <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
   <script src="backjs.js"></script>
 </head>
 
@@ -93,7 +95,7 @@
         </div>
         <div>
           <div class="session-menu-list">
-            <div class="session-menu-item" onclick="showView('backend')">⚙️ Backend Settings</div>
+            <div class="session-menu-item" id="sess-backend-item" onclick="showView('backend')">⚙️ Backend Settings</div>
             <div class="session-menu-item" onclick="showView('kds')">🍳 Kitchen Display</div>
             <div class="session-menu-item" onclick="doLogout()">🚪 Log Out</div>
           </div>
@@ -329,7 +331,7 @@
         <div style="position:relative">
           <button class="hamburger" onclick="toggleHamburger()" title="Menu">☰</button>
           <div class="hamburger-menu" id="hamburger-menu">
-            <button class="hm-item" onclick="showView('backend');closeHamburger()">⚙️ Backend</button>
+            <button class="hm-item" id="hm-backend-btn" onclick="showView('backend');closeHamburger()">⚙️ Backend</button>
             <button class="hm-item" onclick="showView('kds');closeHamburger()">🍳 Kitchen Display</button>
             <button class="hm-item" onclick="switchPosView('floor');closeHamburger()">🪑 Table View</button>
             <button class="hm-item" onclick="showView('session');closeHamburger()">🏠 Session Home</button>
@@ -453,7 +455,12 @@
         </div>
       </div>
       <div id="upi-wrap" class="hidden">
-        <div class="upi-qr" id="upi-qr-display"></div>
+        <div class="upi-qr" id="upi-qr-canvas"></div>
+        <div style="text-align:center;font-size:12px;color:var(--cream-m);margin-bottom:4px">
+          Pay to <strong id="upi-id-label" style="color:var(--amber)"></strong>
+        </div>
+        <div style="text-align:center;font-size:18px;font-weight:700;color:var(--cream);margin-bottom:10px" id="upi-amount-label"></div>
+        <a id="upi-deep-link" href="#" class="btn-confirm" style="display:block;text-align:center;text-decoration:none;margin-bottom:4px">Open in UPI App</a>
       </div>
       <div id="card-wrap" class="hidden">
         <div class="fp-group"><label>Transaction Reference</label><input type="text" id="card-ref"

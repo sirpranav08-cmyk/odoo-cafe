@@ -50,7 +50,7 @@ const S = {
   ],
   paymentMethods: [
     { id: 1, name: 'Cash', type: 'cash', enabled: true, icon: '💵' },
-    { id: 2, name: 'UPI', type: 'upi', enabled: true, icon: '📱', upiId: 'odoo_cafe@ybl' },
+    { id: 2, name: 'UPI', type: 'upi', enabled: true, icon: '📱', upiId: 'sripranav08@okaxis' },
     { id: 3, name: 'Card / Digital', type: 'card', enabled: true, icon: '💳' },
   ],
   promotions: [
@@ -77,6 +77,10 @@ const S = {
 // NAVIGATION
 // ══════════════════════════════════════════
 function showView(v) {
+  // Role-based access control
+  if (v === 'backend' && S.currentUser?.role !== 'admin') {
+    showToast('Access denied — Admin only'); return;
+  }
   document.querySelectorAll('.view').forEach(el => el.classList.add('hidden'));
   document.getElementById('view-' + v).classList.remove('hidden');
   S.currentView = v;
@@ -96,11 +100,20 @@ function switchAuthTab(tab) {
   if (vp && tab !== 'login') vp.remove();
 }
 
-// ── API helpers ───────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════
+// ══════════════════════════════════════════
+// API + EMAILJS
+// ══════════════════════════════════════════
 const API = '/api';
+const EMAILJS_SERVICE_ID  = 'service_lu28vxe';
+const EMAILJS_TEMPLATE_ID = 'template_63tdbx5';
+const EMAILJS_PUBLIC_KEY  = 'dkLVASmAKFMrmX8pR';
+
+if (typeof emailjs !== 'undefined') emailjs.init(EMAILJS_PUBLIC_KEY);
+
 function authHeader() {
-  const token = localStorage.getItem('cafe_token');
-  return token ? { 'Authorization': 'Bearer ' + token } : {};
+  const t = localStorage.getItem('cafe_token');
+  return t ? { 'Authorization': 'Bearer ' + t } : {};
 }
 async function apiFetch(path, opts = {}) {
   const res = await fetch(API + path, {
@@ -109,6 +122,42 @@ async function apiFetch(path, opts = {}) {
   });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
+}
+
+async function sendOTPEmail(email, name, otp) {
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+      to_email: email, to_name: name, otp,
+      name, time: new Date().toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit' }),
+      message: 'Your OTP is: ' + otp,
+    }, EMAILJS_PUBLIC_KEY);
+    return true;
+  } catch(e) { console.error('EmailJS:', e); return false; }
+}
+
+// ── OTP screen helpers ────────────────────────────────────────────────────────
+const OTP_CTX = { email: null, purpose: null, name: null };
+
+function showOTPVerifyScreen(email, purpose, name) {
+  OTP_CTX.email = email; OTP_CTX.purpose = purpose; OTP_CTX.name = name || '';
+  ['auth-login','auth-signup','auth-forgot','auth-newpass'].forEach(id => {
+    document.getElementById(id)?.classList.add('hidden');
+  });
+  const tabs = document.querySelector('.auth-tabs');
+  if (tabs) { tabs.style.opacity = '0.3'; tabs.style.pointerEvents = 'none'; }
+  document.getElementById('auth-otp').classList.remove('hidden');
+  document.getElementById('otp-email-label').textContent = email;
+  const inp = document.getElementById('otp-input');
+  if (inp) { inp.value = ''; setTimeout(() => inp.focus(), 100); }
+}
+
+function cancelOTP() {
+  OTP_CTX.email = null; OTP_CTX.purpose = null; OTP_CTX.name = null;
+  document.getElementById('auth-otp').classList.add('hidden');
+  document.getElementById('auth-newpass')?.classList.add('hidden');
+  const tabs = document.querySelector('.auth-tabs');
+  if (tabs) { tabs.style.opacity = ''; tabs.style.pointerEvents = ''; }
+  switchAuthTab('login');
 }
 
 // ── Login ─────────────────────────────────────────────────────────────────────
@@ -121,17 +170,24 @@ async function doLogin() {
   btn.disabled = true; btn.textContent = 'Signing in…';
 
   const { ok, status, data } = await apiFetch('/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password: pass }),
+    method: 'POST', body: JSON.stringify({ email, password: pass }),
   });
 
   btn.disabled = false; btn.textContent = 'Open Session';
 
   if (!ok) {
     if (status === 403 && data.code === 'EMAIL_NOT_VERIFIED') {
-      showVerificationPrompt(email);
+      showToast('Please verify your email first');
+      // Let them resend OTP
+      const { ok: rok, data: rd } = await apiFetch('/auth/resend-otp', {
+        method: 'POST', body: JSON.stringify({ email }),
+      });
+      if (rok) {
+        await sendOTPEmail(rd.email, rd.name, rd.otp);
+        showOTPVerifyScreen(email, 'verify', rd.name);
+      }
     } else {
-      showToast(data.message || 'Login failed');
+      showToast(data.message || 'Invalid credentials');
     }
     return;
   }
@@ -143,141 +199,7 @@ async function doLogin() {
   showToast('Welcome back, ' + data.user.name + '!');
 }
 
-// ── Show "resend verification" prompt ─────────────────────────────────────────
-function showVerificationPrompt(email) {
-  const existing = document.getElementById('verify-prompt');
-  if (existing) existing.remove();
-
-  const div = document.createElement('div');
-  div.id = 'verify-prompt';
-  div.style.cssText = 'margin-top:12px;padding:12px;background:rgba(232,160,32,0.1);border:1px solid rgba(232,160,32,0.3);border-radius:8px;font-size:12px;color:#B0A080;text-align:center';
-  div.innerHTML = `
-    <div style="margin-bottom:6px">📧 Please verify your email before logging in.</div>
-    <a onclick="resendVerification('${email}')" style="color:var(--amber);cursor:pointer;text-decoration:underline">Resend verification email</a>`;
-  document.getElementById('auth-login').appendChild(div);
-}
-
-async function resendVerification(email) {
-  const { ok, data } = await apiFetch('/auth/resend-verification', {
-    method: 'POST',
-    body: JSON.stringify({ email }),
-  });
-  showToast(data.message || (ok ? 'Email sent!' : 'Error'));
-}
-
-// ── Forgot password — Step 1: request OTP ────────────────────────────────────
-async function doForgotPassword() {
-  const email = document.getElementById('f-email').value.trim();
-  if (!email) { showToast('Enter your email'); return; }
-
-  const btn = document.querySelector('#auth-forgot .btn-primary');
-  btn.disabled = true; btn.textContent = 'Sending…';
-
-  const { ok, data } = await apiFetch('/auth/forgot-password', {
-    method: 'POST',
-    body: JSON.stringify({ email }),
-  });
-
-  btn.disabled = false; btn.textContent = 'Send OTP';
-
-  if (!ok) { showToast(data.message || 'Error'); return; }
-
-  if (data.sent) {
-    // Send OTP via EmailJS
-    await sendOTPEmail(data.email, data.name, data.otp);
-    showForgotOTPScreen(email);
-  } else {
-    // Email not found — show generic message (no enumeration)
-    showToast('If that email exists, an OTP has been sent.');
-  }
-}
-
-// ── Forgot password — Step 2: enter OTP screen ───────────────────────────────
-function showForgotOTPScreen(email) {
-  document.getElementById('auth-forgot').innerHTML = `
-    <div style="text-align:center;margin-bottom:16px">
-      <div style="font-size:32px;margin-bottom:8px">🔐</div>
-      <div style="font-size:14px;font-weight:600;color:var(--cream)">Enter OTP</div>
-      <div style="font-size:12px;color:var(--cream-m);margin-top:4px">
-        Sent to <strong style="color:var(--amber)">${email}</strong> · valid 10 min
-      </div>
-    </div>
-    <div class="form-group">
-      <label>6-digit OTP</label>
-      <input type="text" id="reset-otp" placeholder="000000" maxlength="6"
-        style="text-align:center;font-size:24px;letter-spacing:8px;font-weight:700"
-        oninput="this.value=this.value.replace(/[^0-9]/g,'')" />
-    </div>
-    <div class="form-group">
-      <label>New Password</label>
-      <input type="password" id="reset-pass" placeholder="Min 6 characters" />
-    </div>
-    <div class="form-group">
-      <label>Confirm Password</label>
-      <input type="password" id="reset-pass2" placeholder="Repeat password" />
-    </div>
-    <button class="btn-primary" onclick="doResetPassword('${email}')">Reset Password</button>
-    <div style="margin-top:12px;font-size:12px;color:var(--cream-m);text-align:center">
-      Didn't get it? <a onclick="doResendForgotOTP('${email}')" style="color:var(--amber);cursor:pointer">Resend OTP</a>
-      &nbsp;·&nbsp; <a onclick="switchAuthTab('forgot')" style="color:var(--amber);cursor:pointer">Change email</a>
-    </div>`;
-}
-
-// ── Forgot password — Step 3: submit new password ────────────────────────────
-async function doResetPassword(email) {
-  const otp   = document.getElementById('reset-otp')?.value.trim();
-  const pass  = document.getElementById('reset-pass')?.value;
-  const pass2 = document.getElementById('reset-pass2')?.value;
-
-  if (!otp || otp.length !== 6) { showToast('Enter the 6-digit OTP'); return; }
-  if (!pass || pass.length < 6) { showToast('Password must be at least 6 characters'); return; }
-  if (pass !== pass2)            { showToast('Passwords do not match'); return; }
-
-  const btn = document.querySelector('#auth-forgot .btn-primary');
-  btn.disabled = true; btn.textContent = 'Resetting…';
-
-  const { ok, data } = await apiFetch('/auth/reset-password', {
-    method: 'POST',
-    body: JSON.stringify({ email, otp, password: pass }),
-  });
-
-  btn.disabled = false; btn.textContent = 'Reset Password';
-
-  if (!ok) { showToast(data.message || 'Failed'); return; }
-
-  // Success — show confirmation and redirect to login
-  document.getElementById('auth-forgot').innerHTML = `
-    <div style="text-align:center;padding:20px 0">
-      <div style="font-size:40px;margin-bottom:12px">✅</div>
-      <div style="font-size:15px;font-weight:600;color:var(--cream);margin-bottom:8px">Password Reset!</div>
-      <div style="font-size:13px;color:var(--cream-m);margin-bottom:20px">You can now log in with your new password.</div>
-      <button class="btn-primary" onclick="switchAuthTab('login')">Go to Login →</button>
-    </div>`;
-}
-
-// ── Resend forgot password OTP ────────────────────────────────────────────────
-async function doResendForgotOTP(email) {
-  const { ok, data } = await apiFetch('/auth/forgot-password', {
-    method: 'POST',
-    body: JSON.stringify({ email }),
-  });
-  if (ok && data.sent) {
-    await sendOTPEmail(data.email, data.name, data.otp);
-    showToast('New OTP sent to ' + email);
-  } else {
-    showToast('Could not resend OTP');
-  }
-}
-
-// ── EmailJS config — replace with your actual IDs ────────────────────────────
-const EMAILJS_SERVICE_ID  = 'service_lu28vxe';
-const EMAILJS_TEMPLATE_ID = 'template_63tdbx5';
-const EMAILJS_PUBLIC_KEY  = 'dkLVASmAKFMrmX8pR';
-
-// Init EmailJS
-if (typeof emailjs !== 'undefined') emailjs.init(EMAILJS_PUBLIC_KEY);
-
-// ── Signup — Step 1: create account & send OTP via EmailJS ───────────────────
+// ── Signup ────────────────────────────────────────────────────────────────────
 async function doSignup() {
   const name  = document.getElementById('s-name').value.trim();
   const email = document.getElementById('s-email').value.trim();
@@ -286,107 +208,179 @@ async function doSignup() {
   if (pass.length < 6) { showToast('Password must be at least 6 characters'); return; }
 
   const btn = document.querySelector('#auth-signup .btn-primary');
-  btn.disabled = true; btn.textContent = 'Creating account…';
+  btn.disabled = true; btn.textContent = 'Sending OTP…';
 
   const { ok, data } = await apiFetch('/auth/signup', {
-    method: 'POST',
-    body: JSON.stringify({ name, email, password: pass }),
+    method: 'POST', body: JSON.stringify({ name, email, password: pass }),
   });
 
   btn.disabled = false; btn.textContent = 'Create Account';
 
   if (!ok) { showToast(data.message || 'Signup failed'); return; }
 
-  // Send OTP via EmailJS from the browser
-  await sendOTPEmail(data.email, data.name, data.otp);
-
-  // Show OTP input screen
-  showOTPScreen(email, name);
+  const sent = await sendOTPEmail(data.email, data.name, data.otp);
+  if (!sent) showToast('Account created but email failed — check EmailJS config');
+  showOTPVerifyScreen(email, 'verify', name);
 }
 
-// ── Send OTP email via EmailJS ────────────────────────────────────────────────
-async function sendOTPEmail(email, name, otp) {
-  try {
-    const result = await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
-      to_email: email,
-      to_name:  name,
-      otp:      otp,
-    }, EMAILJS_PUBLIC_KEY);
-    console.log('EmailJS success:', result);
-  } catch (err) {
-    console.error('EmailJS full error:', JSON.stringify(err));
-    console.error('EmailJS status:', err?.status, 'text:', err?.text);
-    showToast('Email error ' + (err?.status || '') + ': ' + (err?.text || JSON.stringify(err)));
-  }
-}
-
-// ── Show OTP verification screen ──────────────────────────────────────────────
-function showOTPScreen(email, name) {
-  document.getElementById('auth-signup').innerHTML = `
-    <div style="text-align:center;padding:10px 0">
-      <div style="font-size:36px;margin-bottom:10px">📧</div>
-      <div style="font-size:15px;font-weight:600;color:var(--cream);margin-bottom:6px">Check your inbox!</div>
-      <div style="font-size:12px;color:var(--cream-m);margin-bottom:20px">
-        We sent a 6-digit OTP to<br><strong style="color:var(--amber)">${email}</strong><br>
-        <span style="font-size:11px">Valid for 10 minutes</span>
-      </div>
-      <div class="form-group">
-        <label>Enter OTP</label>
-        <input type="text" id="otp-input" placeholder="000000" maxlength="6"
-          style="text-align:center;font-size:24px;letter-spacing:8px;font-weight:700"
-          oninput="this.value=this.value.replace(/[^0-9]/g,'')" />
-      </div>
-      <button class="btn-primary" onclick="doVerifyOTP('${email}')">Verify OTP</button>
-      <div style="margin-top:12px;font-size:12px;color:var(--cream-m)">
-        Didn't get it? <a onclick="doResendOTP('${email}','${name}')" style="color:var(--amber);cursor:pointer">Resend OTP</a>
-      </div>
-    </div>`;
-}
-
-// ── Verify OTP ────────────────────────────────────────────────────────────────
-async function doVerifyOTP(email) {
+// ── Verify OTP (signup or login unverified) ───────────────────────────────────
+async function verifyOTP() {
   const otp = document.getElementById('otp-input')?.value.trim();
   if (!otp || otp.length !== 6) { showToast('Enter the 6-digit OTP'); return; }
 
-  const btn = document.querySelector('#auth-signup .btn-primary');
-  btn.disabled = true; btn.textContent = 'Verifying…';
+  const { email, purpose } = OTP_CTX;
+  if (!email) { showToast('Session expired'); cancelOTP(); return; }
 
-  const { ok, data } = await apiFetch('/auth/verify-otp', {
-    method: 'POST',
-    body: JSON.stringify({ email, otp }),
-  });
+  if (purpose === 'verify') {
+    const btn = document.querySelector('#auth-otp .btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
 
-  btn.disabled = false; btn.textContent = 'Verify OTP';
+    const { ok, data } = await apiFetch('/auth/verify-otp', {
+      method: 'POST', body: JSON.stringify({ email, otp }),
+    });
 
-  if (!ok) { showToast(data.message || 'Invalid OTP'); return; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Verify OTP'; }
 
-  // Auto-login after verification
-  localStorage.setItem('cafe_token', data.token);
-  S.currentUser = data.user;
-  await loadAppData();
-  showView('session');
-  showToast('Welcome, ' + data.user.name + '! 🎉');
+    if (!ok) { showToast(data.message || 'Invalid OTP'); return; }
+
+    localStorage.setItem('cafe_token', data.token);
+    S.currentUser = data.user;
+    cancelOTP();
+    await loadAppData();
+    showView('session');
+    showToast('Welcome, ' + data.user.name + '! 🎉');
+
+  } else if (purpose === 'reset') {
+    // Verify OTP then show new password screen
+    const { ok, data } = await apiFetch('/auth/verify-reset-otp', {
+      method: 'POST', body: JSON.stringify({ email, otp }),
+    });
+    if (!ok) { showToast(data.message || 'Invalid OTP'); return; }
+
+    // Show new password fields
+    document.getElementById('auth-otp').classList.add('hidden');
+    const np = document.getElementById('auth-newpass');
+    if (np) {
+      np.classList.remove('hidden');
+      document.getElementById('np-email-label').textContent = email;
+    }
+  }
 }
 
 // ── Resend OTP ────────────────────────────────────────────────────────────────
-async function doResendOTP(email, name) {
-  const { ok, data } = await apiFetch('/auth/resend-otp', {
-    method: 'POST',
-    body: JSON.stringify({ email }),
+async function resendOTP() {
+  const { email, purpose, name } = OTP_CTX;
+  if (!email) return;
+
+  if (purpose === 'verify') {
+    const { ok, data } = await apiFetch('/auth/resend-otp', {
+      method: 'POST', body: JSON.stringify({ email }),
+    });
+    if (!ok) { showToast(data.message || 'Failed to resend'); return; }
+    const sent = await sendOTPEmail(data.email, data.name, data.otp);
+    showToast(sent ? 'OTP resent to ' + email : 'Failed to send email');
+
+  } else if (purpose === 'reset') {
+    const { ok, data } = await apiFetch('/auth/forgot-password', {
+      method: 'POST', body: JSON.stringify({ email }),
+    });
+    if (ok && data.sent) {
+      const sent = await sendOTPEmail(data.email, data.name, data.otp);
+      showToast(sent ? 'OTP resent to ' + email : 'Failed to send email');
+    }
+  }
+
+  const inp = document.getElementById('otp-input');
+  if (inp) { inp.value = ''; inp.focus(); }
+}
+
+// ── Forgot Password ───────────────────────────────────────────────────────────
+async function doForgotPassword() {
+  const email = document.getElementById('f-email').value.trim();
+  if (!email) { showToast('Enter your email'); return; }
+
+  const btn = document.querySelector('#auth-forgot .btn-primary');
+  btn.disabled = true; btn.textContent = 'Sending OTP…';
+
+  const { ok, data } = await apiFetch('/auth/forgot-password', {
+    method: 'POST', body: JSON.stringify({ email }),
   });
+
+  btn.disabled = false; btn.textContent = 'Send OTP';
+
   if (!ok) { showToast(data.message || 'Error'); return; }
-  await sendOTPEmail(data.email, data.name, data.otp);
-  showToast('New OTP sent to ' + email);
+
+  if (data.sent) {
+    await sendOTPEmail(data.email, data.name, data.otp);
+    showOTPVerifyScreen(email, 'reset', data.name);
+  } else {
+    showToast('If that email exists, an OTP was sent.');
+  }
+}
+
+// ── Reset Password (after OTP verified) ──────────────────────────────────────
+async function doResetPassword() {
+  const email = OTP_CTX.email;
+  const otp   = document.getElementById('otp-input')?.value?.trim() || '';
+  const pass1 = document.getElementById('np-pass1')?.value || '';
+  const pass2 = document.getElementById('np-pass2')?.value || '';
+
+  if (pass1.length < 6) { showToast('Password must be at least 6 characters'); return; }
+  if (pass1 !== pass2)  { showToast('Passwords do not match'); return; }
+
+  const btn = document.querySelector('#auth-newpass .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  const { ok, data } = await apiFetch('/auth/reset-password', {
+    method: 'POST', body: JSON.stringify({ email, otp, password: pass1 }),
+  });
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Set Password'; }
+
+  if (!ok) { showToast(data.message || 'Failed to reset'); return; }
+
+  showToast('Password updated! Please log in.');
+  cancelOTP();
+  switchAuthTab('login');
 }
 
 // ── Logout ────────────────────────────────────────────────────────────────────
 function doLogout() {
   localStorage.removeItem('cafe_token');
   S.currentUser = null; S.cart = []; S.currentTable = null;
+  S.orders = []; S.products = []; S.categories = [];
   showView('auth');
 }
 
-// ── Auto-restore session on page load ────────────────────────────────────────
+// ── Load all app data from MongoDB ────────────────────────────────────────────
+async function loadAppData() {
+  await apiFetch('/data/seed', { method: 'POST' });
+  const { ok, data } = await apiFetch('/data/bootstrap');
+  if (!ok) return;
+
+  S.categories = data.categories.map(c => ({ id: c._id, _id: c._id, name: c.name, color: c.color }));
+
+  S.products = data.products.map(p => ({
+    id: p._id, _id: p._id, name: p.name,
+    category: p.category?._id || p.category,
+    price: p.price, tax: p.tax, uom: p.uom, desc: p.desc, emoji: p.emoji,
+  }));
+
+  S.orders = data.orders.map(o => ({
+    id: o._id, _id: o._id, num: o.num,
+    tableId: o.tableId, tableNum: o.tableNum,
+    customer: o.customer, customerId: o.customerId,
+    items: o.items, sub: o.sub, tax: o.tax,
+    disc: o.disc || 0, discLabel: o.discLabel,
+    total: o.total, payMethod: o.payMethod,
+    status: o.status, date: o.date,
+  }));
+
+  const maxNum = S.orders.reduce((m, o) => Math.max(m, o.num || 0), 0);
+  S.orderNum = maxNum + 1;
+}
+
+// ── Restore session on page load ──────────────────────────────────────────────
 async function tryRestoreSession() {
   const token = localStorage.getItem('cafe_token');
   if (!token) return;
@@ -400,53 +394,30 @@ async function tryRestoreSession() {
   }
 }
 
-// ── Load all app data from MongoDB after login ────────────────────────────────
-async function loadAppData() {
-  // Seed default data on first run
-  await apiFetch('/data/seed', { method: 'POST' });
-
-  const { ok, data } = await apiFetch('/data/bootstrap');
-  if (!ok) return;
-
-  // Map DB products/categories to the shape S expects
-  S.categories = data.categories.map(c => ({
-    id: c._id, _id: c._id, name: c.name, color: c.color
-  }));
-
-  S.products = data.products.map(p => ({
-    id: p._id, _id: p._id,
-    name: p.name,
-    category: p.category?._id || p.category,
-    categoryName: p.category?.name || '',
-    price: p.price, tax: p.tax, uom: p.uom, desc: p.desc, emoji: p.emoji
-  }));
-
-  S.orders = data.orders.map(o => ({
-    id: o._id, _id: o._id,
-    num: o.num, tableId: o.tableId, tableNum: o.tableNum,
-    customer: o.customer, customerId: o.customerId,
-    items: o.items, sub: o.sub, tax: o.tax,
-    disc: o.disc, discLabel: o.discLabel,
-    total: o.total, payMethod: o.payMethod,
-    status: o.status, date: o.date,
-  }));
-
-  // Determine next order number
-  const maxNum = S.orders.reduce((m, o) => Math.max(m, o.num || 0), 0);
-  S.orderNum = maxNum + 1;
-}
-
 function renderSession() {
   if (!S.currentUser) return;
-  document.getElementById('sess-user-label').textContent = 'Logged in as ' + S.currentUser.name + ' (' + S.currentUser.role + ')';
+  const isAdmin = S.currentUser.role === 'admin';
+
+  document.getElementById('sess-user-label').textContent =
+    'Logged in as ' + S.currentUser.name + ' · ' + (isAdmin ? '👑 Admin' : '👤 Employee');
+
   const paid = S.orders.filter(o => o.status === 'paid');
   document.getElementById('sess-orders').textContent = paid.length;
-  const rev = paid.reduce((s, o) => s + o.total, 0);
+  const rev = paid.reduce((s, o) => s + (o.total || 0), 0);
   document.getElementById('sess-revenue').textContent = '₹' + rev;
   document.getElementById('sess-last-open').textContent = new Date().toLocaleDateString('en-IN');
-  document.getElementById('sess-last-sale').textContent = paid.length ? '₹' + paid[paid.length - 1].total : '₹0';
-  document.getElementById('be-avatar').textContent = (S.currentUser.name[0] || 'A').toUpperCase();
-  document.getElementById('pos-emp-icon').textContent = (S.currentUser.name[0] || 'E').toUpperCase();
+  document.getElementById('sess-last-sale').textContent = paid.length ? '₹' + paid[0].total : '₹0';
+
+  const avatar = document.getElementById('be-avatar');
+  if (avatar) avatar.textContent = (S.currentUser.name?.[0] || 'A').toUpperCase();
+  const empIcon = document.getElementById('pos-emp-icon');
+  if (empIcon) empIcon.textContent = (S.currentUser.name?.[0] || 'E').toUpperCase();
+
+  // Show/hide admin-only elements
+  const backendMenuItem = document.getElementById('sess-backend-item');
+  if (backendMenuItem) backendMenuItem.style.display = isAdmin ? '' : 'none';
+  const backendHamburger = document.getElementById('hm-backend-btn');
+  if (backendHamburger) backendHamburger.style.display = isAdmin ? '' : 'none';
 }
 
 function openPOSSession() {
@@ -481,7 +452,7 @@ function renderProductsTable() {
       <td style="color:var(--amber);font-weight:700">₹${p.price}</td>
       <td>${p.tax}%</td><td>${p.uom}</td>
       <td><div class="tbl-actions">
-        <button class="tbl-btn" onclick="openProductForm(${p.id})">Edit</button>
+        <button class="tbl-btn" onclick="openProductForm('${p.id}')">Edit</button>
         <button class="tbl-btn danger" onclick="deleteItem('products',${p.id})">Delete</button>
       </div></td>
     </tr>`;
@@ -490,7 +461,7 @@ function renderProductsTable() {
 
 function openProductForm(id = null) {
   S.editingFormType = 'product'; S.editingId = id;
-  const p = id ? S.products.find(x => x.id === id) : { name: '', category: S.categories[0]?.id || 1, price: '', tax: 5, uom: 'piece', desc: '', emoji: '🍽' };
+  const p = id ? S.products.find(x => x.id == id) : { name: '', category: S.categories[0]?.id || 1, price: '', tax: 5, uom: 'piece', desc: '', emoji: '🍽' };
   document.getElementById('fp-title').textContent = id ? 'Edit Product' : 'New Product';
   document.getElementById('fp-body').innerHTML = `
     <div class="fp-group"><label>Emoji</label><input type="text" id="fp-emoji" value="${p.emoji}" maxlength="2"/></div>
@@ -515,7 +486,7 @@ function renderCategoriesTable() {
       <td><span class="color-dot" style="background:${c.color}"></span> ${c.color}</td>
       <td>${cnt} products</td>
       <td><div class="tbl-actions">
-        <button class="tbl-btn" onclick="openCategoryForm(${c.id})">Edit</button>
+        <button class="tbl-btn" onclick="openCategoryForm('${c.id}')">Edit</button>
         <button class="tbl-btn danger" onclick="deleteItem('categories',${c.id})">Delete</button>
       </div></td>
     </tr>`;
@@ -523,7 +494,7 @@ function renderCategoriesTable() {
 }
 function openCategoryForm(id = null) {
   S.editingFormType = 'category'; S.editingId = id;
-  const c = id ? S.categories.find(x => x.id === id) : { name: '', color: '#E8A020' };
+  const c = id ? S.categories.find(x => x.id == id) : { name: '', color: '#E8A020' };
   const colors = ['#E8A020', '#D94F3D', '#5BA46A', '#4A90D9', '#9B59B6', '#E67E22', '#1ABC9C', '#E84393'];
   document.getElementById('fp-title').textContent = id ? 'Edit Category' : 'New Category';
   document.getElementById('fp-body').innerHTML = `
@@ -547,11 +518,11 @@ function renderPaymentMethods() {
         ${pm.type === 'upi' ? `<div style="font-size:12px;color:var(--cream-m);margin-top:2px">UPI ID: <span style="color:var(--amber)">${pm.upiId || 'Not set'}</span></div>` : ''}
       </div>
       <label class="toggle"><input type="checkbox" ${pm.enabled ? 'checked' : ''} onchange="togglePM(${pm.id},this.checked)"/><span class="toggle-slider"></span></label>
-      ${pm.type === 'upi' ? `<button class="tbl-btn" onclick="editUPI(${pm.id})">Edit UPI ID</button>` : ''}
+      ${pm.type === 'upi' ? `<button class="tbl-btn" onclick="editUPI('${pm.id}')">Edit UPI ID</button>` : ''}
     </div>`).join('');
 }
-function togglePM(id, val) { const pm = S.paymentMethods.find(p => p.id === id); if (pm) { pm.enabled = val; renderPaymentMethods(); showToast(pm.name + (val ? ' enabled' : ' disabled')); } }
-function editUPI(id) { const pm = S.paymentMethods.find(p => p.id === id); if (!pm) return; const v = prompt('Enter UPI ID:', pm.upiId || ''); if (v !== null) { pm.upiId = v; renderPaymentMethods(); showToast('UPI ID updated'); } }
+function togglePM(id, val) { const pm = S.paymentMethods.find(p => p.id == id); if (pm) { pm.enabled = val; renderPaymentMethods(); showToast(pm.name + (val ? ' enabled' : ' disabled')); } }
+function editUPI(id) { const pm = S.paymentMethods.find(p => p.id == id); if (!pm) return; const v = prompt('Enter UPI ID:', pm.upiId || ''); if (v !== null) { pm.upiId = v; renderPaymentMethods(); showToast('UPI ID updated'); } }
 
 // Promotions
 function renderPromosTable() {
@@ -565,7 +536,7 @@ function renderPromosTable() {
       <td style="font-size:12px">${cond}</td>
       <td><span class="badge-status ${p.active ? 'badge-active' : 'badge-inactive'}">${p.active ? 'Active' : 'Inactive'}</span></td>
       <td><div class="tbl-actions">
-        <button class="tbl-btn" onclick="openPromoForm(${p.id})">Edit</button>
+        <button class="tbl-btn" onclick="openPromoForm('${p.id}')">Edit</button>
         <button class="tbl-btn danger" onclick="deleteItem('promotions',${p.id})">Delete</button>
       </div></td>
     </tr>`;
@@ -573,7 +544,7 @@ function renderPromosTable() {
 }
 function openPromoForm(id = null) {
   S.editingFormType = 'promo'; S.editingId = id;
-  const p = id ? S.promotions.find(x => x.id === id) : { name: '', type: 'coupon', code: '', discType: 'pct', discVal: 10, minAmt: 0, minQty: 1, active: true };
+  const p = id ? S.promotions.find(x => x.id == id) : { name: '', type: 'coupon', code: '', discType: 'pct', discVal: 10, minAmt: 0, minQty: 1, active: true };
   document.getElementById('fp-title').textContent = id ? 'Edit Promotion' : 'New Promotion';
   document.getElementById('fp-body').innerHTML = `
     <div class="fp-group"><label>Name *</label><input type="text" id="fp-name" value="${p.name}"/></div>
@@ -606,14 +577,14 @@ function renderFloorsTable() {
     <td>${t.floor}</td><td>${t.seats} seats</td>
     <td><span class="badge-status ${t.active ? 'badge-active' : 'badge-inactive'}">${t.active ? 'Active' : 'Inactive'}</span></td>
     <td><div class="tbl-actions">
-      <button class="tbl-btn" onclick="openFloorForm(${t.id})">Edit</button>
+      <button class="tbl-btn" onclick="openFloorForm('${t.id}')">Edit</button>
       <button class="tbl-btn danger" onclick="deleteItem('floors',${t.id})">Delete</button>
     </div></td>
   </tr>`).join('');
 }
 function openFloorForm(id = null) {
   S.editingFormType = 'floor'; S.editingId = id;
-  const t = id ? S.floors.find(x => x.id === id) : { num: '', floor: 'Main Floor', seats: 4, active: true };
+  const t = id ? S.floors.find(x => x.id == id) : { num: '', floor: 'Main Floor', seats: 4, active: true };
   document.getElementById('fp-title').textContent = id ? 'Edit Table' : 'New Table';
   document.getElementById('fp-body').innerHTML = `
     <div class="fp-group"><label>Table Number *</label><input type="number" id="fp-num" value="${t.num}"/></div>
@@ -632,16 +603,16 @@ function renderUsersTable() {
     <td><span class="badge-role ${u.role === 'admin' ? 'badge-admin' : 'badge-emp'}">${u.role === 'admin' ? 'Admin' : 'Employee'}</span></td>
     <td><span class="badge-status ${u.status === 'active' ? 'badge-active' : 'badge-inactive'}">${u.status}</span></td>
     <td><div class="tbl-actions">
-      <button class="tbl-btn" onclick="openUserForm(${u.id})">Edit</button>
-      <button class="tbl-btn" onclick="changePassword(${u.id})">Password</button>
-      <button class="tbl-btn" onclick="archiveUser(${u.id})">${u.status === 'active' ? 'Archive' : 'Activate'}</button>
+      <button class="tbl-btn" onclick="openUserForm('${u.id}')">Edit</button>
+      <button class="tbl-btn" onclick="changePassword('${u.id}')">Password</button>
+      <button class="tbl-btn" onclick="archiveUser('${u.id}')">${u.status === 'active' ? 'Archive' : 'Activate'}</button>
       <button class="tbl-btn danger" onclick="deleteItem('users',${u.id})">Delete</button>
     </div></td>
   </tr>`).join('');
 }
 function openUserForm(id = null) {
   S.editingFormType = 'user'; S.editingId = id;
-  const u = id ? S.users.find(x => x.id === id) : { name: '', email: '', password: '', role: 'employee', status: 'active' };
+  const u = id ? S.users.find(x => x.id == id) : { name: '', email: '', password: '', role: 'employee', status: 'active' };
   document.getElementById('fp-title').textContent = id ? 'Edit User' : 'New User';
   document.getElementById('fp-body').innerHTML = `
     <div class="fp-group"><label>Name *</label><input type="text" id="fp-name" value="${u.name}"/></div>
@@ -651,8 +622,8 @@ function openUserForm(id = null) {
     <div class="fp-group"><label>Status</label><select id="fp-status"><option value="active"${u.status === 'active' ? ' selected' : ''}>Active</option><option value="inactive"${u.status === 'inactive' ? ' selected' : ''}>Inactive</option></select></div>`;
   openFormPanel();
 }
-function archiveUser(id) { const u = S.users.find(x => x.id === id); if (u) { u.status = u.status === 'active' ? 'inactive' : 'active'; renderUsersTable(); showToast(u.name + ' ' + (u.status === 'active' ? 'activated' : 'archived')); } }
-function changePassword(id) { const u = S.users.find(x => x.id === id); if (!u) return; const p = prompt('New password for ' + u.name + ':'); if (p) { u.password = p; showToast('Password changed for ' + u.name); } }
+function archiveUser(id) { const u = S.users.find(x => x.id == id); if (u) { u.status = u.status === 'active' ? 'inactive' : 'active'; renderUsersTable(); showToast(u.name + ' ' + (u.status === 'active' ? 'activated' : 'archived')); } }
+function changePassword(id) { const u = S.users.find(x => x.id == id); if (!u) return; const p = prompt('New password for ' + u.name + ':'); if (p) { u.password = p; showToast('Password changed for ' + u.name); } }
 
 // Form panel
 function openFormPanel() { document.getElementById('form-panel').classList.add('open') }
@@ -663,51 +634,40 @@ async function saveForm() {
   if (type === 'product') {
     const d = { name: v('fp-name'), category: v('fp-cat'), price: parseFloat(v('fp-price')) || 0, tax: parseInt(v('fp-tax')), uom: v('fp-uom'), desc: v('fp-desc'), emoji: v('fp-emoji') || '🍽' };
     if (!d.name || !d.price) { showToast('Name and price required'); return; }
-    const { ok, data } = await apiFetch('/data/products' + (id ? '/'+id : ''), {
-      method: id ? 'PUT' : 'POST', body: JSON.stringify(d)
-    });
+    const { ok, data } = await apiFetch('/data/products' + (id ? '/'+id : ''), { method: id ? 'PUT':'POST', body: JSON.stringify(d) });
     if (!ok) { showToast(data.message || 'Save failed'); return; }
-    const mapped = { id: data._id, _id: data._id, name: data.name, category: data.category?._id || data.category, price: data.price, tax: data.tax, uom: data.uom, desc: data.desc, emoji: data.emoji };
-    if (id) { const i = S.products.findIndex(x => x.id === id); if (i >= 0) S.products[i] = mapped; }
-    else S.products.push(mapped);
+    const mp = { id: data._id, _id: data._id, name: data.name, category: data.category?._id || data.category, price: data.price, tax: data.tax, uom: data.uom, desc: data.desc, emoji: data.emoji };
+    if (id) { const i = S.products.findIndex(x => x.id == id); if (i >= 0) S.products[i] = mp; } else S.products.push(mp);
     renderProductsTable();
 
   } else if (type === 'category') {
     const d = { name: v('fp-name'), color: v('fp-color') || '#E8A020' };
     if (!d.name) { showToast('Name required'); return; }
-    const { ok, data } = await apiFetch('/data/categories' + (id ? '/'+id : ''), {
-      method: id ? 'PUT' : 'POST', body: JSON.stringify(d)
-    });
+    const { ok, data } = await apiFetch('/data/categories' + (id ? '/'+id : ''), { method: id ? 'PUT':'POST', body: JSON.stringify(d) });
     if (!ok) { showToast(data.message || 'Save failed'); return; }
-    const mapped = { id: data._id, _id: data._id, name: data.name, color: data.color };
-    if (id) { const i = S.categories.findIndex(x => x.id === id); if (i >= 0) S.categories[i] = mapped; }
-    else S.categories.push(mapped);
+    const mc = { id: data._id, _id: data._id, name: data.name, color: data.color };
+    if (id) { const i = S.categories.findIndex(x => x.id == id); if (i >= 0) S.categories[i] = mc; } else S.categories.push(mc);
     renderCategoriesTable();
 
   } else if (type === 'promo') {
     const type2 = v('fp-type');
-    const d = {
-      name: v('fp-name'), type: type2, discType: v('fp-disc-type'), discVal: parseFloat(v('fp-disc-val')) || 0,
-      code: type2 === 'coupon' ? v('fp-code') : '', minAmt: type2 === 'auto_order' ? parseFloat(v('fp-minamt')) || 0 : 0,
-      minQty: type2 === 'auto_product' ? parseInt(v('fp-minqty')) || 1 : 0, active: document.getElementById('fp-active').checked
-    };
+    const d = { name: v('fp-name'), type: type2, discType: v('fp-disc-type'), discVal: parseFloat(v('fp-disc-val')) || 0, code: type2 === 'coupon' ? v('fp-code') : '', minAmt: type2 === 'auto_order' ? parseFloat(v('fp-minamt')) || 0 : 0, minQty: type2 === 'auto_product' ? parseInt(v('fp-minqty')) || 1 : 0, active: document.getElementById('fp-active').checked };
     if (!d.name) { showToast('Name required'); return; }
-    if (id) { Object.assign(S.promotions.find(x => x.id === id), d); } else { S.promotions.push({ id: Date.now(), ...d }); }
+    if (id) { Object.assign(S.promotions.find(x => x.id == id), d); } else { S.promotions.push({ id: Date.now(), ...d }); }
     renderPromosTable();
 
   } else if (type === 'floor') {
     const d = { num: parseInt(v('fp-num')) || 1, floor: v('fp-floor') || 'Main Floor', seats: parseInt(v('fp-seats')) || 2, active: document.getElementById('fp-active').checked };
-    if (id) { Object.assign(S.floors.find(x => x.id === id), d); } else { S.floors.push({ id: Date.now(), ...d }); }
+    if (id) { Object.assign(S.floors.find(x => x.id == id), d); } else { S.floors.push({ id: Date.now(), ...d }); }
     renderFloorsTable();
 
   } else if (type === 'user') {
     const d = { name: v('fp-name'), email: v('fp-email'), role: v('fp-role'), status: v('fp-status') };
     if (!d.name || !d.email) { showToast('Name and email required'); return; }
-    if (id) { Object.assign(S.users.find(x => x.id === id), d); }
+    if (id) { Object.assign(S.users.find(x => x.id == id), d); }
     else { if (!v('fp-pass')) { showToast('Password required'); return; } S.users.push({ id: Date.now(), ...d, password: v('fp-pass') }); }
     renderUsersTable();
   }
-
   closeFormPanel(); showToast('Saved!');
 }
 async function deleteItem(col, id) {
@@ -786,7 +746,7 @@ function renderPosGrid(q = '') {
   if (!items.length) { grid.innerHTML = '<div style="color:var(--cream-m);font-size:13px;padding:24px">No products found</div>'; return; }
   grid.innerHTML = items.map(p => {
     const cat = S.categories.find(c => c.id === p.category);
-    return `<div class="item-card" onclick="addToCart(${p.id})">
+    return `<div class="item-card" onclick="addToCart('${p.id}')">
       <div class="cat-color-bar" style="background:${cat?.color || 'transparent'}"></div>
       <span class="item-emoji">${p.emoji}</span>
       <div class="item-name">${p.name}</div>
@@ -819,7 +779,7 @@ function showFloorPopup() {
   const active = S.floors.filter(t => t.active);
   grid.innerHTML = active.map(t => {
     const hasOrder = S.orders.find(o => o.tableId === t.id && o.status === 'draft');
-    return `<div class="fp-table${hasOrder ? ' occupied' : ''}" onclick="selectTable(${t.id})">
+    return `<div class="fp-table${hasOrder ? ' occupied' : ''}" onclick="selectTable('${t.id}')">
       <div class="fp-num">${t.num}</div>
       <div class="fp-seats">${t.seats} seats</div>
       ${hasOrder ? '<div style="font-size:10px;color:var(--amber);margin-top:4px">Active order</div>' : ''}
@@ -829,9 +789,9 @@ function showFloorPopup() {
 }
 function closeFloorPopup() { document.getElementById('floor-popup').classList.add('hidden'); }
 function selectTable(id) {
-  S.currentTable = S.floors.find(t => t.id === id);
+  S.currentTable = S.floors.find(t => t.id == id);
   // load existing draft order if any
-  const existing = S.orders.find(o => o.tableId === id && o.status === 'draft');
+  const existing = S.orders.find(o => o.tableId == id && o.status === 'draft');
   if (existing) { S.cart = existing.items.map(i => ({ ...i })); S.coupon = existing.coupon || null; }
   else { S.cart = []; }
   S.currentCustomer = null;
@@ -853,7 +813,7 @@ function renderFloorGrid(floor) {
   const tables = S.floors.filter(t => t.floor === floor && t.active);
   document.getElementById('floor-table-grid').innerHTML = tables.map(t => {
     const hasOrder = S.orders.find(o => o.tableId === t.id && o.status === 'draft');
-    return `<div class="table-card${hasOrder ? ' occupied' : ''}" onclick="selectTable(${t.id});switchPosView('order')">
+    return `<div class="table-card${hasOrder ? ' occupied' : ''}" onclick="selectTable('${t.id}');switchPosView('order')">
       <div class="table-num">${t.num}</div>
       <div class="table-seats">${t.seats} seats</div>
       <div class="table-status">${hasOrder ? '● Active' : '○ Free'}</div>
@@ -863,9 +823,9 @@ function renderFloorGrid(floor) {
 
 // ── CART ──
 function addToCart(id) {
-  const p = S.products.find(x => x.id === id);
+  const p = S.products.find(x => x.id == id);
   if (!p) return;
-  const ex = S.cart.find(c => c.id === id);
+  const ex = S.cart.find(c => c.id == id);
   if (ex) ex.qty++;
   else S.cart.push({ id: p.id, name: p.name, emoji: p.emoji, price: p.price, tax: p.tax, qty: 1 });
   checkAutoPromos();
@@ -873,10 +833,10 @@ function addToCart(id) {
   showToast(p.emoji + ' ' + p.name + ' added');
 }
 function changeQty(id, d) {
-  const ex = S.cart.find(c => c.id === id);
+  const ex = S.cart.find(c => c.id == id);
   if (!ex) return;
   ex.qty = Math.max(0, ex.qty + d);
-  if (ex.qty === 0) S.cart = S.cart.filter(c => c.id !== id);
+  if (ex.qty === 0) S.cart = S.cart.filter(c => c.id != id);
   checkAutoPromos();
   renderCart();
 }
@@ -930,9 +890,9 @@ function renderCart() {
       <div class="cl-unit">₹${i.price} each</div>
     </div>
     <div class="qty-ctrl">
-      <button class="qb" onclick="changeQty(${i.id},-1)">−</button>
+      <button class="qb" onclick="changeQty('${i.id}',-1)">−</button>
       <span class="qn">${i.qty}</span>
-      <button class="qb" onclick="changeQty(${i.id},1)">+</button>
+      <button class="qb" onclick="changeQty('${i.id}',1)">+</button>
     </div>
     <div class="cl-price">₹${i.price * i.qty}</div>
   </div>`).join('');
@@ -957,7 +917,7 @@ function renderOrdersList(filter = '') {
   let orders = [...S.orders].reverse();
   if (filter) orders = orders.filter(o => o.customer?.toLowerCase().includes(filter) || String(o.num).includes(filter) || new Date(o.date).toLocaleDateString().includes(filter));
   if (!orders.length) { list.innerHTML = '<div style="color:var(--cream-m);text-align:center;padding:24px;font-size:13px">No orders yet</div>'; return; }
-  list.innerHTML = orders.map(o => `<div class="order-row" onclick="openOrderDetail(${o.id})">
+  list.innerHTML = orders.map(o => `<div class="order-row" onclick="openOrderDetail('${o.id}')">
     <div class="or-num">#${String(o.num).padStart(5, '0')}</div>
     <div class="or-info">
       <div class="or-cust">${o.customer || 'Guest'}</div>
@@ -970,7 +930,7 @@ function renderOrdersList(filter = '') {
 function filterOrders(q) { renderOrdersList(q); }
 
 function openOrderDetail(id) {
-  const o = S.orders.find(x => x.id === id);
+  const o = S.orders.find(x => x.id == id);
   if (!o) return;
   document.getElementById('od-title').textContent = 'Order #' + String(o.num).padStart(5, '0');
   document.getElementById('od-body').innerHTML = `
@@ -986,7 +946,7 @@ function openOrderDetail(id) {
     <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:700;padding:8px 0;border-top:1px solid var(--border);margin-top:6px"><span>Total</span><span style="color:var(--amber)">₹${o.total}</span></div>`;
   const footer = document.getElementById('od-footer');
   if (o.status === 'draft') {
-    footer.innerHTML = `<button class="od-footer btn-del" onclick="deleteOrder(${o.id})">Delete</button><button class="od-footer btn-edit" onclick="editOrder(${o.id})">Edit Order</button>`;
+    footer.innerHTML = `<button class="od-footer btn-del" onclick="deleteOrder('${o.id}')">Delete</button><button class="od-footer btn-edit" onclick="editOrder('${o.id}')">Edit Order</button>`;
   } else {
     footer.innerHTML = `<button class="od-footer btn-edit" onclick="closeOrderDetail()" style="background:var(--surface2);color:var(--cream)">Close</button>`;
   }
@@ -995,7 +955,7 @@ function openOrderDetail(id) {
 function closeOrderDetail() { document.getElementById('order-detail-wrap').classList.add('hidden'); }
 function deleteOrder(id) { if (confirm('Delete this order?')) { S.orders = S.orders.filter(o => o.id !== id); closeOrderDetail(); renderOrdersList(); showToast('Order deleted'); } }
 function editOrder(id) {
-  const o = S.orders.find(x => x.id === id);
+  const o = S.orders.find(x => x.id == id);
   if (!o) return;
   S.cart = o.items.map(i => ({ ...i }));
   S.coupon = o.coupon || null;
@@ -1035,12 +995,38 @@ function openPaymentModal() {
     `<div class="m-row"><span>Tax (5%)</span><span>₹${tax}</span></div>` +
     (disc ? `<div class="m-row"><span>${discLabel}</span><span style="color:var(--green)">-₹${disc}</span></div>` : '');
 
-  document.getElementById('cash-change-wrap').classList.toggle('hidden', pm.type !== 'cash');
-  document.getElementById('upi-wrap').classList.toggle('hidden', pm.type !== 'upi');
-  document.getElementById('card-wrap').classList.toggle('hidden', pm.type !== 'card');
-  if (pm.type === 'upi') {
-    document.getElementById('upi-qr-display').innerHTML = `<div style="text-align:center;padding:10px"><div style="font-size:30px;margin-bottom:6px">📱</div><div style="font-size:11px;color:#333">Scan to pay</div><div style="font-size:10px;color:#555;margin-top:4px">${pm.upiId || 'Set UPI ID in settings'}</div><div style="font-size:14px;font-weight:700;color:#111;margin-top:4px">₹${total}</div></div>`;
+  const cashWrap = document.getElementById('cash-change-wrap');
+  const upiWrap  = document.getElementById('upi-wrap');
+  const cardWrap = document.getElementById('card-wrap');
+
+  if (cashWrap) cashWrap.classList.toggle('hidden', pm.type !== 'cash');
+  if (upiWrap)  upiWrap.classList.toggle('hidden', pm.type !== 'upi');
+  if (cardWrap) cardWrap.classList.toggle('hidden', pm.type !== 'card');
+
+  if (pm.type === 'upi' && upiWrap) {
+    const upiId   = pm.upiId || 'sripranav08@okaxis';
+    // Simple UPI format for better compatibility
+    const upiLink = `upi://pay?pa=${upiId}&pn=OdooCafe&am=${total}&cu=INR`;
+
+    console.log('UPI Payment - UPI Link:', upiLink);
+
+    const idLabel = document.getElementById('upi-id-label');
+    const amtLabel = document.getElementById('upi-amount-label');
+    const deepLink = document.getElementById('upi-deep-link');
+    const qrCanvas = document.getElementById('upi-qr-canvas');
+    
+    if (idLabel) idLabel.textContent = upiId;
+    if (amtLabel) amtLabel.textContent = '₹' + total;
+    if (deepLink) deepLink.href = upiLink;
+
+    if (qrCanvas) {
+      // Use external QR service (qr-server.com) instead of client-side generation
+      const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiLink)}`;
+      qrCanvas.innerHTML = `<img src="${qrImageUrl}" alt="UPI QR Code" style="width:100%;height:100%;object-fit:contain;" />`;
+      console.log('✅ QR code loaded from external service');
+    }
   }
+
   openOverlay('ov-payment');
 }
 
@@ -1055,21 +1041,16 @@ async function confirmPayment() {
   const { sub, tax, disc, discLabel, total } = calcTotals();
   const orderData = {
     tableId: S.currentTable?.id, tableNum: S.currentTable?.num,
-    customer: S.currentCustomer?.name || 'Guest',
-    customerId: S.currentCustomer?.id,
+    customer: S.currentCustomer?.name || 'Guest', customerId: S.currentCustomer?.id,
     items: [...S.cart], sub, tax, disc, discLabel, total,
     payMethod: S.payMethod, status: 'paid', date: new Date().toISOString()
   };
-
-  const { ok, data } = await apiFetch('/data/orders', {
-    method: 'POST',
-    body: JSON.stringify(orderData),
-  });
-
-  const order = ok ? { ...data, id: data._id, num: data.num } : { ...orderData, id: Date.now(), num: S.orderNum++ };
-  if (ok) S.orderNum = order.num + 1;
+  const { ok, data } = await apiFetch('/data/orders', { method: 'POST', body: JSON.stringify(orderData) });
+  const order = ok
+    ? { ...data, id: data._id }
+    : { ...orderData, id: Date.now(), num: S.orderNum++ };
+  if (ok) S.orderNum = (order.num || 0) + 1;
   S.orders.unshift(order);
-
   closeOverlay('ov-payment');
   document.getElementById('success-sub').textContent = `₹${total} via ${S.payMethod} · Order #${String(order.num).padStart(5, '0')}`;
   openOverlay('ov-success');
@@ -1108,9 +1089,9 @@ function openCustomerModal() { searchCustomers(''); document.getElementById('new
 function searchCustomers(q) {
   const res = document.getElementById('cust-results');
   const found = q ? S.customers.filter(c => c.name.toLowerCase().includes(q.toLowerCase()) || c.email.toLowerCase().includes(q.toLowerCase())) : S.customers;
-  res.innerHTML = found.map(c => `<div class="cust-result" onclick="selectCustomer(${c.id})"><strong>${c.name}</strong><div class="cr-email">${c.email} · ${c.phone}</div></div>`).join('');
+  res.innerHTML = found.map(c => `<div class="cust-result" onclick="selectCustomer('${c.id}')"><strong>${c.name}</strong><div class="cr-email">${c.email} · ${c.phone}</div></div>`).join('');
 }
-function selectCustomer(id) { S.currentCustomer = S.customers.find(c => c.id === id); renderCart(); closeOverlay('ov-customer'); showToast('Customer: ' + S.currentCustomer.name); }
+function selectCustomer(id) { S.currentCustomer = S.customers.find(c => c.id == id); renderCart(); closeOverlay('ov-customer'); showToast('Customer: ' + S.currentCustomer.name); }
 function createAndSelectCustomer() {
   const name = document.getElementById('new-cust-name').value.trim();
   const email = document.getElementById('new-cust-email').value.trim();
@@ -1131,7 +1112,7 @@ function renderKDS(filter = '') {
     let orders = S.kdsOrders.filter(o => o.stage === stage);
     if (filter) orders = orders.filter(o => o.items.some(i => i.name.toLowerCase().includes(filter)));
     col.innerHTML = `<div class="kds-col-header">${label} <span style="color:var(--amber)">(${orders.length})</span></div>` +
-      orders.map(o => `<div class="kds-ticket" onclick="advanceKDSOrder(${o.id})">
+      orders.map(o => `<div class="kds-ticket" onclick="advanceKDSOrder('${o.id}')">
         <div class="kds-ticket-hd">
           <span class="kds-ticket-num">#${String(o.num).padStart(5, '0')} · Table ${o.tableNum}</span>
           <span class="kds-ticket-time">${timeSince(o.time)}</span>
@@ -1144,7 +1125,7 @@ function renderKDS(filter = '') {
   });
 }
 function advanceKDSOrder(id) {
-  const o = S.kdsOrders.find(x => x.id === id);
+  const o = S.kdsOrders.find(x => x.id == id);
   if (!o) return;
   const stages = ['tocook', 'preparing', 'completed'];
   const idx = stages.indexOf(o.stage);
@@ -1152,7 +1133,7 @@ function advanceKDSOrder(id) {
   renderKDS();
 }
 function toggleKDSItem(orderId, itemIdx) {
-  const o = S.kdsOrders.find(x => x.id === orderId);
+  const o = S.kdsOrders.find(x => x.id == orderId);
   if (o) o.items[itemIdx].done = !o.items[itemIdx].done;
   renderKDS();
 }

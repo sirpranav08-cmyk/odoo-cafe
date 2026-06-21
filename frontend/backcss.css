@@ -329,7 +329,7 @@
     .m-row strong { color: var(--cream) }
     .m-total { display: flex; justify-content: space-between; font-size: 16px; font-weight: 700; margin-bottom: 16px }
     .m-total .tv { color: var(--amber) }
-    .upi-qr { width: 140px; height: 140px; background: white; border-radius: 10px; display: flex; align-items: center; justify-content: center; margin: 12px auto; font-size: 11px; color: #333; text-align: center; padding: 8px }
+    .upi-qr { width: 250px; height: 250px; background: white; border-radius: 10px; display: flex; align-items: center; justify-content: center; margin: 12px auto; font-size: 11px; color: #333; text-align: center; padding: 0; overflow: hidden }
     .success-icon { font-size: 50px; text-align: center; margin-bottom: 10px }
     .success-title { font-family: var(--display); font-size: 20px; text-align: center; margin-bottom: 6px }
     .success-sub { font-size: 13px; color: var(--cream-m); text-align: center; margin-bottom: 18px }
